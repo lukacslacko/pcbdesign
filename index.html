@@ -1,0 +1,927 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PCB Designer</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #1e1e1e; color: #ddd;
+    display: flex; flex-direction: column;
+  }
+  .toolbar {
+    display: flex; gap: 6px; padding: 8px 10px;
+    background: #2a2a2a; border-bottom: 1px solid #444;
+    align-items: center; flex-wrap: wrap;
+  }
+  .toolbar button {
+    background: #3a3a3a; color: #ddd; border: 1px solid #555;
+    padding: 6px 12px; border-radius: 4px; cursor: pointer;
+    font-size: 13px; font-family: inherit;
+  }
+  .toolbar button:hover { background: #4a4a4a; }
+  .toolbar button.active {
+    background: #4a7c4a; border-color: #6fae6f; color: #fff;
+  }
+  .toolbar button.active:hover { background: #559a55; }
+  .toolbar input[type=number] {
+    background: #1e1e1e; color: #ddd; border: 1px solid #555;
+    padding: 4px 6px; border-radius: 3px; width: 56px; font-family: inherit;
+  }
+  .toolbar input[type=file] { display: none; }
+  .toolbar .sep { width: 1px; align-self: stretch; background: #555; margin: 0 4px; }
+  .toolbar .group { display: flex; gap: 4px; align-items: center; }
+  .toolbar .group label { font-size: 12px; color: #aaa; }
+  .info { margin-left: auto; font-size: 12px; color: #aaa; font-variant-numeric: tabular-nums; }
+  .legend { display: flex; gap: 12px; align-items: center; padding: 6px 10px; background: #252525; border-bottom: 1px solid #444; font-size: 12px; color: #aaa; }
+  .legend .swatch { display: inline-flex; align-items: center; gap: 6px; }
+  .legend .sq { width: 14px; height: 14px; border: 1px solid #555; border-radius: 2px; }
+  .dip-only, .bus-only { display: none !important; }
+  body.dip-active .dip-only { display: flex !important; }
+  body.dip-active .dip-only.sep { display: block !important; }
+  body.bus-active .bus-only { display: flex !important; }
+  body.bus-active .bus-only.sep { display: block !important; }
+  .canvas-wrap { flex: 1; overflow: auto; padding: 16px; background: #181818; }
+  canvas { background: #f4f4f4; box-shadow: 0 6px 24px rgba(0,0,0,.5); display: block; cursor: crosshair; image-rendering: pixelated; }
+  .hint { font-size: 11px; color: #888; padding: 0 10px 4px; }
+  kbd { background: #333; border: 1px solid #555; border-bottom-width: 2px; border-radius: 3px; padding: 1px 5px; font-size: 11px; font-family: ui-monospace, monospace; }
+</style>
+</head>
+<body>
+  <div class="toolbar">
+    <div class="group">
+      <button data-tool="erase" title="Erase rectangle (E)">Erase</button>
+      <button data-tool="board" class="active" title="Board rectangle (B)">Board</button>
+      <button data-tool="trace" title="Trace line (T)">Trace</button>
+      <button data-tool="bus"   title="Bus — parallel traces (S)">Bus</button>
+      <button data-tool="hole"  title="Hole line (H)">Hole</button>
+      <button data-tool="dip"   title="DIP package (D)">DIP</button>
+    </div>
+    <div class="sep dip-only"></div>
+    <div class="group dip-only">
+      <label>Pins</label><input type="number" id="dipPins" value="8" min="2" max="64" step="2">
+      <button id="dipNarrow" class="active" title="0.3-inch-style narrow body">Narrow</button>
+      <button id="dipBroad" title="0.6-inch-style wide body">Broad</button>
+      <button id="dipRotate" title="Rotate orientation (R)">Rotate</button>
+      <span style="color:#777;font-size:11px">4 / 8 / 0 → 8 / 16 / 20 pins</span>
+    </div>
+    <div class="sep bus-only"></div>
+    <div class="group bus-only">
+      <label>Lines</label><input type="number" id="busLines" value="2" min="1" max="10">
+      <span style="color:#777;font-size:11px">1–9 / 0 → 1–9 / 10 lines</span>
+    </div>
+    <div class="sep"></div>
+    <div class="group">
+      <label>Cols</label><input type="number" id="cols" value="40" min="2" max="400">
+      <label>Rows</label><input type="number" id="rows" value="40" min="2" max="400">
+      <button id="resize">Resize</button>
+    </div>
+    <div class="sep"></div>
+    <div class="group">
+      <label>Zoom</label>
+      <button id="zoomOut">−</button>
+      <button id="zoomIn">+</button>
+    </div>
+    <div class="sep"></div>
+    <div class="group">
+      <button id="newBtn">New</button>
+      <button id="saveBtn">Save</button>
+      <button id="loadBtn">Load</button>
+      <input type="file" id="loadFile" accept=".json,application/json">
+      <button id="exportBtn">Export SCAD</button>
+    </div>
+    <div class="info" id="info">—</div>
+  </div>
+  <div class="legend">
+    <span class="swatch"><span class="sq" style="background:#f4f4f4"></span> Empty</span>
+    <span class="swatch"><span class="sq" style="background:#1d6b3e"></span> Board (0.5 mm)</span>
+    <span class="swatch"><span class="sq" style="background:#d4a017"></span> Trace pad (+0.3 mm, 1.6 mm wide; connects only along drawn segments)</span>
+    <span class="swatch"><span class="sq" style="background:#d4a017;position:relative">
+      <span style="position:absolute;inset:32% 32%;background:#1a1a1a;border-radius:1px"></span>
+    </span> Hole (0.8 mm square, 0.18 mm bottom)</span>
+    <span class="swatch" style="margin-left:auto">Cell = 2.54 mm (0.1″)</span>
+  </div>
+  <div class="hint">
+    <kbd>E</kbd>/<kbd>B</kbd>/<kbd>T</kbd>/<kbd>S</kbd>/<kbd>H</kbd>/<kbd>D</kbd> pick tools.
+    Board / Erase = rectangle drag · Trace / Hole = axis-parallel line · Bus = parallel lines (perpendicular offset follows drag direction) · DIP = click to place. Right-drag always erases.
+  </div>
+  <div class="canvas-wrap" id="wrap"><canvas id="grid"></canvas></div>
+
+<script>
+'use strict';
+
+// --- physical constants (mm) ---
+const MM_CELL        = 2.54; // 0.1" grid — matches DIP pin pitch
+const MM_BOARD       = 0.5;
+const MM_TRACE       = 0.3;
+const MM_TRACE_W     = 1.6; // pad / trace width (centered in cell)
+const MM_HOLE        = 0.8;
+const MM_HOLE_BOTTOM = 0.18;
+
+const TRACE_FRAC = MM_TRACE_W / MM_CELL;
+const HOLE_FRAC  = MM_HOLE    / MM_CELL;
+
+// --- visual constants ---
+const COLOR_EMPTY = '#f4f4f4';
+const COLOR_BOARD = '#1d6b3e';
+const COLOR_TRACE = '#d4a017';
+const COLOR_HOLE  = '#1a1a1a';
+
+// --- state ---
+let cols = 40, rows = 40;
+let cells = makeCells(cols, rows);
+let links = new Set(); // edge keys; see linkKey()
+let tool = 'board';
+let cellPx = 28;
+let drag = null;       // { start:{x,y}, end:{x,y}, tool, button }
+let hover = null;      // {x,y}
+
+// DIP options
+let dipPins   = 8;
+let dipWidth  = 'narrow';
+let dipOrient = 'h';
+const DIP_PITCH       = 1;
+const DIP_ROW_NARROW  = 3;
+const DIP_ROW_BROAD   = 6;
+
+// Bus options
+let busLines = 2;
+
+const canvas = document.getElementById('grid');
+const ctx = canvas.getContext('2d');
+const info = document.getElementById('info');
+const loadFile = document.getElementById('loadFile');
+const AUTOSAVE_KEY = 'pcbdesign:autosave';
+
+function makeCells(c, r) {
+  return Array.from({length: r}, () => Array(c).fill('empty'));
+}
+
+function setCanvasSize() {
+  canvas.width = cols * cellPx;
+  canvas.height = rows * cellPx;
+}
+
+// --- link helpers ---
+// 'h:x,y' means the edge between (x,y) and (x+1,y).
+// 'v:x,y' means the edge between (x,y) and (x,y+1).
+function linkKey(x1, y1, x2, y2) {
+  if (y1 === y2) {
+    return 'h:' + Math.min(x1, x2) + ',' + y1;
+  }
+  return 'v:' + x1 + ',' + Math.min(y1, y2);
+}
+function linksTouching(x, y) {
+  // The four potential edges meeting cell (x,y).
+  return [
+    'h:' + (x - 1) + ',' + y,   // west
+    'h:' + x       + ',' + y,   // east
+    'v:' + x + ',' + (y - 1),   // north
+    'v:' + x + ',' + y,         // south
+  ];
+}
+
+// --- tool buttons ---
+for (const btn of document.querySelectorAll('[data-tool]')) {
+  btn.addEventListener('click', () => selectTool(btn.dataset.tool));
+}
+function selectTool(t) {
+  tool = t;
+  for (const btn of document.querySelectorAll('[data-tool]')) {
+    btn.classList.toggle('active', btn.dataset.tool === t);
+  }
+  document.body.classList.toggle('dip-active', t === 'dip');
+  document.body.classList.toggle('bus-active', t === 'bus');
+  canvas.style.cursor = TOOL_CURSORS[t] || 'crosshair';
+  draw();
+}
+
+function setDipPins(n) {
+  dipPins = n;
+  document.getElementById('dipPins').value = n;
+  draw();
+}
+function setBusLines(n) {
+  busLines = n;
+  document.getElementById('busLines').value = n;
+  draw();
+}
+
+window.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') return;
+  const k = e.key.toLowerCase();
+
+  if (tool === 'dip') {
+    if (e.key === '4') { setDipPins(8);  e.preventDefault(); return; }
+    if (e.key === '8') { setDipPins(16); e.preventDefault(); return; }
+    if (e.key === '0') { setDipPins(20); e.preventDefault(); return; }
+    if (k === 'r')     { dipOrient = dipOrient === 'h' ? 'v' : 'h'; draw(); return; }
+  }
+  if (tool === 'bus') {
+    if (e.key >= '1' && e.key <= '9') { setBusLines(parseInt(e.key, 10)); e.preventDefault(); return; }
+    if (e.key === '0')                { setBusLines(10); e.preventDefault(); return; }
+  }
+
+  if      (k === 'e') selectTool('erase');
+  else if (k === 'b') selectTool('board');
+  else if (k === 't') selectTool('trace');
+  else if (k === 's') selectTool('bus');
+  else if (k === 'h') selectTool('hole');
+  else if (k === 'd') selectTool('dip');
+});
+
+// --- tool cursors (built as SVG data URLs) ---
+function cursorUrl(inner) {
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'>${inner}</svg>`;
+  return `url("data:image/svg+xml;utf8,${encodeURIComponent(svg)}") 12 12, crosshair`;
+}
+const TOOL_CURSORS = {
+  erase: cursorUrl(`<rect x='4' y='4' width='16' height='16' fill='rgba(220,50,50,0.35)' stroke='#dc3232' stroke-width='2'/><line x1='7' y1='7' x2='17' y2='17' stroke='#dc3232' stroke-width='2'/><line x1='17' y1='7' x2='7' y2='17' stroke='#dc3232' stroke-width='2'/>`),
+  board: cursorUrl(`<rect x='4' y='4' width='16' height='16' fill='rgba(29,107,62,0.85)' stroke='#0e3a22' stroke-width='2'/>`),
+  trace: cursorUrl(`<rect x='4' y='4' width='16' height='16' fill='rgba(29,107,62,0.7)' stroke='#0e3a22' stroke-width='1'/><rect x='8' y='8' width='8' height='8' fill='#d4a017' stroke='#7a5a0c' stroke-width='1'/>`),
+  bus:   cursorUrl(`<rect x='2' y='3' width='20' height='3' fill='#d4a017' stroke='#7a5a0c' stroke-width='0.5'/><rect x='2' y='10' width='20' height='3' fill='#d4a017' stroke='#7a5a0c' stroke-width='0.5'/><rect x='2' y='17' width='20' height='3' fill='#d4a017' stroke='#7a5a0c' stroke-width='0.5'/>`),
+  hole:  cursorUrl(`<rect x='4' y='4' width='16' height='16' fill='rgba(29,107,62,0.7)' stroke='#0e3a22' stroke-width='1'/><rect x='8' y='8' width='8' height='8' fill='#d4a017' stroke='#7a5a0c' stroke-width='1'/><rect x='10' y='10' width='4' height='4' fill='#1a1a1a'/>`),
+  dip:   cursorUrl(`<rect x='8' y='3' width='8' height='18' rx='1' fill='#333' stroke='#111' stroke-width='1'/><circle cx='10' cy='7' r='1.2' fill='#d4a017'/><circle cx='14' cy='7' r='1.2' fill='#d4a017'/><circle cx='10' cy='12' r='1.2' fill='#d4a017'/><circle cx='14' cy='12' r='1.2' fill='#d4a017'/><circle cx='10' cy='17' r='1.2' fill='#d4a017'/><circle cx='14' cy='17' r='1.2' fill='#d4a017'/>`),
+};
+
+// DIP controls
+document.getElementById('dipPins').addEventListener('input', e => {
+  let n = parseInt(e.target.value, 10);
+  if (Number.isNaN(n) || n < 2) n = 2;
+  if (n > 64) n = 64;
+  if (n % 2) n += 1;
+  dipPins = n;
+  draw();
+});
+document.getElementById('dipNarrow').addEventListener('click', () => {
+  dipWidth = 'narrow';
+  document.getElementById('dipNarrow').classList.add('active');
+  document.getElementById('dipBroad').classList.remove('active');
+  draw();
+});
+document.getElementById('dipBroad').addEventListener('click', () => {
+  dipWidth = 'broad';
+  document.getElementById('dipBroad').classList.add('active');
+  document.getElementById('dipNarrow').classList.remove('active');
+  draw();
+});
+document.getElementById('dipRotate').addEventListener('click', () => {
+  dipOrient = dipOrient === 'h' ? 'v' : 'h';
+  draw();
+});
+
+// Bus controls
+document.getElementById('busLines').addEventListener('input', e => {
+  let n = parseInt(e.target.value, 10);
+  if (Number.isNaN(n) || n < 1) n = 1;
+  if (n > 10) n = 10;
+  busLines = n;
+  draw();
+});
+
+// --- toolbar wiring ---
+document.getElementById('resize').addEventListener('click', () => {
+  const c = clampInt(document.getElementById('cols').value, 2, 400, 40);
+  const r = clampInt(document.getElementById('rows').value, 2, 400, 40);
+  resizeGrid(c, r);
+});
+document.getElementById('zoomIn').addEventListener('click', () => setZoom(cellPx + 4));
+document.getElementById('zoomOut').addEventListener('click', () => setZoom(cellPx - 4));
+document.getElementById('newBtn').addEventListener('click', () => {
+  if (!confirm('Discard the current board and start over?')) return;
+  cells = makeCells(cols, rows);
+  links = new Set();
+  autosave(); draw();
+});
+document.getElementById('saveBtn').addEventListener('click', save);
+document.getElementById('loadBtn').addEventListener('click', () => loadFile.click());
+loadFile.addEventListener('change', e => {
+  const f = e.target.files[0];
+  if (f) load(f);
+  loadFile.value = '';
+});
+document.getElementById('exportBtn').addEventListener('click', exportScad);
+
+function clampInt(v, lo, hi, fallback) {
+  const n = parseInt(v, 10);
+  if (Number.isNaN(n)) return fallback;
+  return Math.max(lo, Math.min(hi, n));
+}
+
+function setZoom(px) {
+  cellPx = Math.max(6, Math.min(48, px));
+  setCanvasSize(); draw();
+}
+
+function resizeGrid(c, r) {
+  const next = makeCells(c, r);
+  for (let y = 0; y < Math.min(r, rows); y++)
+    for (let x = 0; x < Math.min(c, cols); x++)
+      next[y][x] = cells[y][x];
+  // Drop links that fall outside the new grid.
+  const keep = new Set();
+  for (const k of links) {
+    const m = /^([hv]):(\d+),(\d+)$/.exec(k);
+    if (!m) continue;
+    const x = +m[2], y = +m[3];
+    if (m[1] === 'h') { if (x >= 0 && x + 1 < c && y >= 0 && y < r) keep.add(k); }
+    else              { if (x >= 0 && x < c && y >= 0 && y + 1 < r) keep.add(k); }
+  }
+  cells = next; cols = c; rows = r; links = keep;
+  document.getElementById('cols').value = cols;
+  document.getElementById('rows').value = rows;
+  setCanvasSize(); autosave(); draw();
+}
+
+// --- action plans ---
+// Returns { cells: [{x,y}], segments: [[{x,y}, ...], ...] }. Segments are
+// connected runs along which links should be created.
+function actionPlan(t, s, e) {
+  if (t === 'board' || t === 'erase') {
+    return { cells: rectCells(s, e), segments: [] };
+  }
+  if (t === 'trace' || t === 'hole') {
+    const line = axisLine(s, e);
+    return { cells: line.slice(), segments: [line] };
+  }
+  if (t === 'bus') {
+    const segs = busSegments(s, e);
+    const flat = [];
+    for (const seg of segs) flat.push(...seg);
+    return { cells: flat, segments: segs };
+  }
+  return { cells: [], segments: [] };
+}
+
+function rectCells(s, e) {
+  const out = [];
+  const x0 = Math.min(s.x, e.x), x1 = Math.max(s.x, e.x);
+  const y0 = Math.min(s.y, e.y), y1 = Math.max(s.y, e.y);
+  for (let y = y0; y <= y1; y++)
+    for (let x = x0; x <= x1; x++)
+      out.push({x, y});
+  return out;
+}
+
+function axisLine(s, e) {
+  const dx = Math.abs(e.x - s.x);
+  const dy = Math.abs(e.y - s.y);
+  const out = [];
+  if (dx >= dy) {
+    const y = s.y;
+    const xa = Math.min(s.x, e.x), xb = Math.max(s.x, e.x);
+    // Preserve drag direction so consecutive-pair links walk along it.
+    if (s.x <= e.x) for (let x = xa; x <= xb; x++) out.push({x, y});
+    else            for (let x = xb; x >= xa; x--) out.push({x, y});
+  } else {
+    const x = s.x;
+    const ya = Math.min(s.y, e.y), yb = Math.max(s.y, e.y);
+    if (s.y <= e.y) for (let y = ya; y <= yb; y++) out.push({x, y});
+    else            for (let y = yb; y >= ya; y--) out.push({x, y});
+  }
+  return out;
+}
+
+function busSegments(s, e) {
+  const dx = Math.abs(e.x - s.x);
+  const dy = Math.abs(e.y - s.y);
+  const horizontal = dx >= dy;
+  const segs = [];
+  if (horizontal) {
+    const xa = Math.min(s.x, e.x), xb = Math.max(s.x, e.x);
+    const sign = (e.y - s.y) >= 0 ? 1 : -1;
+    for (let i = 0; i < busLines; i++) {
+      const y = s.y + i * sign;
+      const line = [];
+      for (let x = xa; x <= xb; x++) line.push({x, y});
+      segs.push(line);
+    }
+  } else {
+    const ya = Math.min(s.y, e.y), yb = Math.max(s.y, e.y);
+    const sign = (e.x - s.x) >= 0 ? 1 : -1;
+    for (let i = 0; i < busLines; i++) {
+      const x = s.x + i * sign;
+      const line = [];
+      for (let y = ya; y <= yb; y++) line.push({x, y});
+      segs.push(line);
+    }
+  }
+  return segs;
+}
+
+// --- drawing ---
+
+// Per-frame overrides so previews share the same neighbor-aware renderer.
+let overrides = { cells: new Map(), addLinks: new Set(), removeLinks: new Set() };
+function ovKey(x, y) { return y * 10000 + x; }
+
+function paintCellOverride(map, x, y, state) {
+  if (!inBounds(x, y)) return;
+  // Painting a trace over an existing hole keeps the hole (a hole already acts as a trace pad).
+  if (state === 'trace' && cells[y][x] === 'hole') return;
+  map.set(ovKey(x, y), state);
+}
+
+function buildOverrides() {
+  const cMap = new Map();
+  const addL = new Set();
+  const remL = new Set();
+
+  function applyPlan(plan, target) {
+    for (const c of plan.cells) paintCellOverride(cMap, c.x, c.y, target);
+    if (target === 'empty' || target === 'board') {
+      for (const c of plan.cells) {
+        if (!inBounds(c.x, c.y)) continue;
+        for (const k of linksTouching(c.x, c.y)) remL.add(k);
+      }
+    } else if (target === 'trace' || target === 'hole') {
+      // Add links along each segment between consecutive cells whose
+      // effective state will be trace/hole.
+      for (const seg of plan.segments) {
+        for (let i = 0; i + 1 < seg.length; i++) {
+          const a = seg[i], b = seg[i + 1];
+          if (!inBounds(a.x, a.y) || !inBounds(b.x, b.y)) continue;
+          const sa = previewState(a, target, cMap), sb = previewState(b, target, cMap);
+          if (isPadState(sa) && isPadState(sb)) {
+            addL.add(linkKey(a.x, a.y, b.x, b.y));
+          }
+        }
+      }
+    }
+  }
+
+  if (drag) {
+    const target = targetStateFor(drag.tool);
+    applyPlan(actionPlan(drag.tool, drag.start, drag.end), target);
+  } else if (hover) {
+    if (tool === 'dip') {
+      for (const h of dipHoles(hover.x, hover.y)) {
+        if (inBounds(h.x, h.y)) cMap.set(ovKey(h.x, h.y), 'hole');
+      }
+    } else {
+      const target = targetStateFor(tool);
+      // Single-cell preview at hover (no link changes for a one-cell stub).
+      paintCellOverride(cMap, hover.x, hover.y, target);
+      if (target === 'empty' || target === 'board') {
+        for (const k of linksTouching(hover.x, hover.y)) remL.add(k);
+      }
+    }
+  }
+
+  return { cells: cMap, addLinks: addL, removeLinks: remL };
+}
+
+function isPadState(s) { return s === 'trace' || s === 'hole'; }
+function previewState(c, target, cMap) {
+  // For the purpose of consecutive-link checks: the override map already
+  // reflects what each cell will become, so just read from there.
+  const k = ovKey(c.x, c.y);
+  if (cMap.has(k)) return cMap.get(k);
+  return inBounds(c.x, c.y) ? cells[c.y][c.x] : 'empty';
+}
+
+function effectiveState(x, y) {
+  if (!inBounds(x, y)) return 'empty';
+  const k = ovKey(x, y);
+  if (overrides.cells.has(k)) return overrides.cells.get(k);
+  return cells[y][x];
+}
+
+function hasLink(key) {
+  if (overrides.removeLinks.has(key)) return false;
+  if (overrides.addLinks.has(key)) return true;
+  return links.has(key);
+}
+
+function hasArmEast(x, y)  { return hasLink('h:' + x + ',' + y); }
+function hasArmWest(x, y)  { return hasLink('h:' + (x - 1) + ',' + y); }
+function hasArmSouth(x, y) { return hasLink('v:' + x + ',' + y); }
+function hasArmNorth(x, y) { return hasLink('v:' + x + ',' + (y - 1)); }
+
+function draw() {
+  overrides = buildOverrides();
+
+  ctx.fillStyle = COLOR_EMPTY;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  for (let y = 0; y < rows; y++)
+    for (let x = 0; x < cols; x++)
+      drawCellShape(x, y, effectiveState(x, y));
+
+  drawGrid();
+
+  if (drag) drawDragOverlay();
+  if (!drag && hover) {
+    if (tool === 'dip') drawDipOutline(hover.x, hover.y);
+    else if (tool === 'erase' && inBounds(hover.x, hover.y)) {
+      ctx.fillStyle = 'rgba(220, 50, 50, 0.3)';
+      ctx.fillRect(hover.x * cellPx, hover.y * cellPx, cellPx, cellPx);
+    }
+  }
+}
+
+function drawGrid() {
+  ctx.strokeStyle = 'rgba(0,0,0,0.12)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let x = 0; x <= cols; x++) {
+    const px = Math.round(x * cellPx) + 0.5;
+    ctx.moveTo(px, 0); ctx.lineTo(px, rows * cellPx);
+  }
+  for (let y = 0; y <= rows; y++) {
+    const py = Math.round(y * cellPx) + 0.5;
+    ctx.moveTo(0, py); ctx.lineTo(cols * cellPx, py);
+  }
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(0,0,0,0.22)';
+  ctx.beginPath();
+  for (let x = 0; x <= cols; x += 5) {
+    const px = Math.round(x * cellPx) + 0.5;
+    ctx.moveTo(px, 0); ctx.lineTo(px, rows * cellPx);
+  }
+  for (let y = 0; y <= rows; y += 5) {
+    const py = Math.round(y * cellPx) + 0.5;
+    ctx.moveTo(0, py); ctx.lineTo(cols * cellPx, py);
+  }
+  ctx.stroke();
+}
+
+function drawCellShape(x, y, state) {
+  if (state === 'empty') return;
+  const px = x * cellPx, py = y * cellPx;
+
+  ctx.fillStyle = COLOR_BOARD;
+  ctx.fillRect(px, py, cellPx, cellPx);
+
+  if (state !== 'trace' && state !== 'hole') return;
+
+  const padSize = cellPx * TRACE_FRAC;
+  const armLen  = (cellPx - padSize) / 2;
+  const padOff  = armLen;
+
+  ctx.fillStyle = COLOR_TRACE;
+  ctx.fillRect(px + padOff, py + padOff, padSize, padSize);
+  if (hasArmNorth(x, y)) ctx.fillRect(px + padOff, py, padSize, armLen);
+  if (hasArmSouth(x, y)) ctx.fillRect(px + padOff, py + padOff + padSize, padSize, armLen);
+  if (hasArmWest(x, y))  ctx.fillRect(px, py + padOff, armLen, padSize);
+  if (hasArmEast(x, y))  ctx.fillRect(px + padOff + padSize, py + padOff, armLen, padSize);
+
+  if (state === 'hole') {
+    const hSize = cellPx * HOLE_FRAC;
+    const hOff = (cellPx - hSize) / 2;
+    ctx.fillStyle = COLOR_HOLE;
+    ctx.fillRect(px + hOff, py + hOff, hSize, hSize);
+  }
+}
+
+function drawDragOverlay() {
+  const targetTool = drag.tool;
+  const plan = actionPlan(targetTool, drag.start, drag.end);
+
+  if (targetTool === 'erase') {
+    for (const c of plan.cells) {
+      if (!inBounds(c.x, c.y)) continue;
+      ctx.fillStyle = 'rgba(220, 50, 50, 0.4)';
+      ctx.fillRect(c.x * cellPx, c.y * cellPx, cellPx, cellPx);
+    }
+  }
+
+  if (!plan.cells.length) return;
+  let x0 = plan.cells[0].x, y0 = plan.cells[0].y, x1 = x0, y1 = y0;
+  for (const c of plan.cells) {
+    if (c.x < x0) x0 = c.x; if (c.x > x1) x1 = c.x;
+    if (c.y < y0) y0 = c.y; if (c.y > y1) y1 = c.y;
+  }
+  ctx.strokeStyle = '#2a90ff';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x0 * cellPx + 1, y0 * cellPx + 1,
+                 (x1 - x0 + 1) * cellPx - 2, (y1 - y0 + 1) * cellPx - 2);
+}
+
+function inBounds(x, y) { return x >= 0 && y >= 0 && x < cols && y < rows; }
+
+// --- DIP geometry ---
+function dipHoles(originX, originY) {
+  const half = dipPins / 2;
+  const span = dipWidth === 'narrow' ? DIP_ROW_NARROW : DIP_ROW_BROAD;
+  const out = [];
+  if (dipOrient === 'h') {
+    for (let i = 0; i < half; i++) {
+      out.push({ x: originX + i * DIP_PITCH, y: originY });
+      out.push({ x: originX + i * DIP_PITCH, y: originY + span });
+    }
+  } else {
+    for (let i = 0; i < half; i++) {
+      out.push({ x: originX,        y: originY + i * DIP_PITCH });
+      out.push({ x: originX + span, y: originY + i * DIP_PITCH });
+    }
+  }
+  return out;
+}
+
+function dipBodyRect(originX, originY) {
+  const half = dipPins / 2;
+  const span = dipWidth === 'narrow' ? DIP_ROW_NARROW : DIP_ROW_BROAD;
+  if (dipOrient === 'h') {
+    return { x0: originX, y0: originY, x1: originX + (half - 1) * DIP_PITCH, y1: originY + span };
+  } else {
+    return { x0: originX, y0: originY, x1: originX + span, y1: originY + (half - 1) * DIP_PITCH };
+  }
+}
+
+function drawDipOutline(ox, oy) {
+  const r = dipBodyRect(ox, oy);
+  ctx.strokeStyle = '#2a90ff';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([4, 3]);
+  ctx.strokeRect(r.x0 * cellPx + 1, r.y0 * cellPx + 1,
+                 (r.x1 - r.x0 + 1) * cellPx - 2, (r.y1 - r.y0 + 1) * cellPx - 2);
+  ctx.setLineDash([]);
+}
+
+// --- input ---
+function cellAt(e) {
+  const rect = canvas.getBoundingClientRect();
+  const x = Math.floor((e.clientX - rect.left) / cellPx);
+  const y = Math.floor((e.clientY - rect.top)  / cellPx);
+  return { x, y };
+}
+
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+canvas.addEventListener('mousedown', e => {
+  if (e.button !== 0 && e.button !== 2) return;
+  e.preventDefault();
+  const p = cellAt(e);
+  if (tool === 'dip' && e.button === 0) {
+    placeDip(p.x, p.y);
+    return;
+  }
+  drag = { start: p, end: p, tool: e.button === 2 ? 'erase' : tool, button: e.button };
+  draw();
+});
+
+canvas.addEventListener('mouseleave', () => {
+  hover = null;
+  draw();
+});
+
+window.addEventListener('mousemove', e => {
+  if (drag) {
+    drag.end = cellAt(e);
+    draw();
+  } else if (e.target === canvas) {
+    hover = cellAt(e);
+    draw();
+  }
+  if (e.target === canvas) {
+    const p = cellAt(e);
+    if (inBounds(p.x, p.y)) {
+      const mmX = (p.x * MM_CELL).toFixed(1);
+      const mmY = (p.y * MM_CELL).toFixed(1);
+      info.textContent = `cell (${p.x}, ${p.y})  ·  ${mmX} × ${mmY} mm  ·  board ${(cols*MM_CELL).toFixed(1)} × ${(rows*MM_CELL).toFixed(1)} mm`;
+    }
+  }
+});
+
+window.addEventListener('mouseup', e => {
+  if (!drag) return;
+  const targetTool = drag.tool;
+  const target = targetStateFor(targetTool);
+  const plan = actionPlan(targetTool, drag.start, drag.end);
+  applyPlanToState(plan, target);
+  drag = null;
+  autosave();
+  draw();
+});
+
+// Bus draws traces; everything else paints its own state. Erase clears.
+function targetStateFor(t) {
+  if (t === 'erase') return 'empty';
+  if (t === 'bus')   return 'trace';
+  return t;
+}
+
+function applyPlanToState(plan, target) {
+  // 1. Cell states.
+  for (const c of plan.cells) {
+    if (!inBounds(c.x, c.y)) continue;
+    if (target === 'trace' && cells[c.y][c.x] === 'hole') continue; // keep holes
+    cells[c.y][c.x] = target;
+  }
+  // 2. Drop links for cells that became empty or board.
+  if (target === 'empty' || target === 'board') {
+    for (const c of plan.cells) {
+      if (!inBounds(c.x, c.y)) continue;
+      for (const k of linksTouching(c.x, c.y)) links.delete(k);
+    }
+  }
+  // 3. Add links along each segment.
+  if (target === 'trace' || target === 'hole') {
+    for (const seg of plan.segments) {
+      for (let i = 0; i + 1 < seg.length; i++) {
+        const a = seg[i], b = seg[i + 1];
+        if (!inBounds(a.x, a.y) || !inBounds(b.x, b.y)) continue;
+        const sa = cells[a.y][a.x], sb = cells[b.y][b.x];
+        if (isPadState(sa) && isPadState(sb)) {
+          links.add(linkKey(a.x, a.y, b.x, b.y));
+        }
+      }
+    }
+  }
+}
+
+function placeDip(ox, oy) {
+  const holes = dipHoles(ox, oy);
+  for (const h of holes) {
+    if (!inBounds(h.x, h.y)) return; // refuse to place partially
+  }
+  for (const h of holes) cells[h.y][h.x] = 'hole';
+  // DIP pins are isolated holes — no inter-hole links.
+  autosave();
+  draw();
+}
+
+// --- persistence ---
+function serialize() {
+  return { version: 2, cols, rows, cellMm: MM_CELL, cells, links: [...links] };
+}
+function deserialize(data) {
+  if (!data || !Array.isArray(data.cells)) throw new Error('Invalid file');
+  cols = data.cols; rows = data.rows;
+  cells = data.cells.map(row => row.slice());
+  if (Array.isArray(data.links)) {
+    links = new Set(data.links);
+  } else {
+    // Back-compat: infer links from cell adjacency so v1 files keep working.
+    links = new Set();
+    for (let y = 0; y < rows; y++) {
+      for (let x = 0; x < cols; x++) {
+        const s = cells[y][x];
+        if (!isPadState(s)) continue;
+        if (x + 1 < cols && isPadState(cells[y][x + 1])) links.add('h:' + x + ',' + y);
+        if (y + 1 < rows && isPadState(cells[y + 1][x])) links.add('v:' + x + ',' + y);
+      }
+    }
+  }
+  document.getElementById('cols').value = cols;
+  document.getElementById('rows').value = rows;
+  setCanvasSize(); draw();
+}
+
+function save() {
+  const blob = new Blob([JSON.stringify(serialize(), null, 0)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'pcb.json'; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function load(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      deserialize(JSON.parse(reader.result));
+      autosave();
+    } catch (err) {
+      alert('Failed to load: ' + err.message);
+    }
+  };
+  reader.readAsText(file);
+}
+
+function autosave() {
+  try { localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(serialize())); } catch {}
+}
+function restoreAutosave() {
+  try {
+    const raw = localStorage.getItem(AUTOSAVE_KEY);
+    if (!raw) return false;
+    deserialize(JSON.parse(raw));
+    return true;
+  } catch { return false; }
+}
+
+// --- OpenSCAD export ---
+function exportScad() {
+  const f = n => Number(n.toFixed(4)).toString();
+  const out = [];
+  out.push('// PCB design — generated by PCB Designer');
+  out.push(`// grid: ${cols} x ${rows} cells, cell = ${MM_CELL} mm`);
+  out.push(`// board size: ${f(cols*MM_CELL)} x ${f(rows*MM_CELL)} x ${MM_BOARD} mm`);
+  out.push('');
+  out.push(`cell        = ${MM_CELL};`);
+  out.push(`board_h     = ${MM_BOARD};`);
+  out.push(`trace_h     = ${MM_TRACE};`);
+  out.push(`trace_w     = ${MM_TRACE_W};`);
+  out.push(`hole_w      = ${MM_HOLE};`);
+  out.push(`hole_bottom = ${MM_HOLE_BOTTOM};   // unprinted layer left at the bottom of every hole`);
+  out.push('');
+
+  // Coordinate lists. Y flipped so +Y is "up" in OpenSCAD.
+  const fy = y => rows - 1 - y;
+  const baseCells = [];
+  const pads      = [];
+  const connE     = [];
+  const connS     = []; // south in screen = north in SCAD; still one connector per pair
+  const holeCells = [];
+
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      const s = cells[y][x];
+      if (s === 'empty') continue;
+      baseCells.push([x, fy(y)]);
+      if (isPadState(s)) {
+        pads.push([x, fy(y)]);
+        if (s === 'hole') holeCells.push([x, fy(y)]);
+      }
+    }
+  }
+  // Connectors come from the link graph, not adjacency.
+  for (const k of links) {
+    const m = /^([hv]):(\d+),(\d+)$/.exec(k);
+    if (!m) continue;
+    const x = +m[2], y = +m[3];
+    if (m[1] === 'h') {
+      if (x >= 0 && x + 1 < cols && y >= 0 && y < rows &&
+          isPadState(cells[y][x]) && isPadState(cells[y][x + 1])) {
+        connE.push([x, fy(y)]);
+      }
+    } else {
+      if (x >= 0 && x < cols && y >= 0 && y + 1 < rows &&
+          isPadState(cells[y][x]) && isPadState(cells[y + 1][x])) {
+        connS.push([x, fy(y)]);
+      }
+    }
+  }
+
+  if (baseCells.length === 0) {
+    out.push('// (empty design)');
+    downloadText(out.join('\n'), 'pcb.scad');
+    return;
+  }
+
+  out.push('module base_cell(p) { translate([p[0]*cell, p[1]*cell, 0]) cube([cell, cell, board_h]); }');
+  out.push('module pad(p) {');
+  out.push('  translate([p[0]*cell + (cell-trace_w)/2,');
+  out.push('             p[1]*cell + (cell-trace_w)/2,');
+  out.push('             board_h])');
+  out.push('    cube([trace_w, trace_w, trace_h]);');
+  out.push('}');
+  out.push('module conn_east(p) {  // bridge to neighbor at x+1');
+  out.push('  translate([p[0]*cell + (cell+trace_w)/2,');
+  out.push('             p[1]*cell + (cell-trace_w)/2,');
+  out.push('             board_h])');
+  out.push('    cube([cell - trace_w, trace_w, trace_h]);');
+  out.push('}');
+  out.push('module conn_south(p) {  // bridge to neighbor at y+1 (lower in SCAD Y)');
+  out.push('  translate([p[0]*cell + (cell-trace_w)/2,');
+  out.push('             p[1]*cell - (cell-trace_w)/2,');
+  out.push('             board_h])');
+  out.push('    cube([trace_w, cell - trace_w, trace_h]);');
+  out.push('}');
+  out.push('module hole_cut(p)  {');
+  out.push('  translate([p[0]*cell + (cell-hole_w)/2,');
+  out.push('             p[1]*cell + (cell-hole_w)/2,');
+  out.push('             hole_bottom])');
+  out.push('    cube([hole_w, hole_w, board_h + trace_h]); // overshoots top by design');
+  out.push('}');
+  out.push('');
+  const arr = list => '[' + list.map(p => `[${p[0]},${p[1]}]`).join(',') + ']';
+  out.push('base_cells = ' + arr(baseCells) + ';');
+  out.push('pads       = ' + arr(pads)      + ';');
+  out.push('conn_e     = ' + arr(connE)     + ';');
+  out.push('conn_s     = ' + arr(connS)     + ';');
+  out.push('hole_cells = ' + arr(holeCells) + ';');
+  out.push('');
+  out.push('difference() {');
+  out.push('  union() {');
+  out.push('    for (p = base_cells) base_cell(p);');
+  out.push('    for (p = pads)       pad(p);');
+  out.push('    for (p = conn_e)     conn_east(p);');
+  out.push('    for (p = conn_s)     conn_south(p);');
+  out.push('  }');
+  out.push('  for (p = hole_cells) hole_cut(p);');
+  out.push('}');
+
+  downloadText(out.join('\n'), 'pcb.scad');
+}
+
+function downloadText(text, name) {
+  const blob = new Blob([text], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = name; a.click();
+  URL.revokeObjectURL(url);
+}
+
+// --- boot ---
+setCanvasSize();
+restoreAutosave();
+selectTool(tool);
+</script>
+</body>
+</html>
