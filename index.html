@@ -422,6 +422,8 @@ function paintCellOverride(map, x, y, state) {
   if (!inBounds(x, y)) return;
   // Painting a trace over an existing hole keeps the hole (a hole already acts as a trace pad).
   if (state === 'trace' && cells[y][x] === 'hole') return;
+  // Board never overwrites existing pads (traces or holes).
+  if (state === 'board' && isPadState(cells[y][x])) return;
   map.set(ovKey(x, y), state);
 }
 
@@ -435,6 +437,7 @@ function buildOverrides() {
     if (target === 'empty' || target === 'board') {
       for (const c of plan.cells) {
         if (!inBounds(c.x, c.y)) continue;
+        if (target === 'board' && isPadState(cells[c.y][c.x])) continue;
         for (const k of linksTouching(c.x, c.y)) remL.add(k);
       }
     } else if (target === 'trace' || target === 'hole') {
@@ -466,7 +469,10 @@ function buildOverrides() {
       // Single-cell preview at hover (no link changes for a one-cell stub).
       paintCellOverride(cMap, hover.x, hover.y, target);
       if (target === 'empty' || target === 'board') {
-        for (const k of linksTouching(hover.x, hover.y)) remL.add(k);
+        const keepPad = target === 'board' && inBounds(hover.x, hover.y) && isPadState(cells[hover.y][hover.x]);
+        if (!keepPad) {
+          for (const k of linksTouching(hover.x, hover.y)) remL.add(k);
+        }
       }
     }
   }
@@ -710,12 +716,14 @@ function applyPlanToState(plan, target) {
   for (const c of plan.cells) {
     if (!inBounds(c.x, c.y)) continue;
     if (target === 'trace' && cells[c.y][c.x] === 'hole') continue; // keep holes
+    if (target === 'board' && isPadState(cells[c.y][c.x])) continue; // keep traces and holes
     cells[c.y][c.x] = target;
   }
-  // 2. Drop links for cells that became empty or board.
+  // 2. Drop links for cells that became empty or board (but keep links on preserved pads).
   if (target === 'empty' || target === 'board') {
     for (const c of plan.cells) {
       if (!inBounds(c.x, c.y)) continue;
+      if (target === 'board' && isPadState(cells[c.y][c.x])) continue;
       for (const k of linksTouching(c.x, c.y)) links.delete(k);
     }
   }
