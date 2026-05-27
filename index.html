@@ -461,6 +461,13 @@ function buildOverrides() {
   const remL = new Set();
 
   function applyPlan(plan, target) {
+    if (target === 'erase') {
+      for (const c of eraseChanges(plan.cells)) {
+        cMap.set(ovKey(c.x, c.y), c.newState);
+        for (const k of linksTouching(c.x, c.y)) remL.add(k);
+      }
+      return;
+    }
     for (const c of plan.cells) paintCellOverride(cMap, c.x, c.y, target);
     if (target === 'empty' || target === 'board') {
       for (const c of plan.cells) {
@@ -494,12 +501,19 @@ function buildOverrides() {
       }
     } else {
       const target = targetStateFor(tool);
-      // Single-cell preview at hover (no link changes for a one-cell stub).
-      paintCellOverride(cMap, hover.x, hover.y, target);
-      if (target === 'empty' || target === 'board') {
-        const keepPad = target === 'board' && inBounds(hover.x, hover.y) && isPadState(cells[hover.y][hover.x]);
-        if (!keepPad) {
-          for (const k of linksTouching(hover.x, hover.y)) remL.add(k);
+      if (target === 'erase') {
+        for (const c of eraseChanges([hover])) {
+          cMap.set(ovKey(c.x, c.y), c.newState);
+          for (const k of linksTouching(c.x, c.y)) remL.add(k);
+        }
+      } else {
+        // Single-cell preview at hover (no link changes for a one-cell stub).
+        paintCellOverride(cMap, hover.x, hover.y, target);
+        if (target === 'empty' || target === 'board') {
+          const keepPad = target === 'board' && inBounds(hover.x, hover.y) && isPadState(cells[hover.y][hover.x]);
+          if (!keepPad) {
+            for (const k of linksTouching(hover.x, hover.y)) remL.add(k);
+          }
         }
       }
     }
@@ -552,7 +566,9 @@ function draw() {
     if (tool === 'dip') drawDipOutline(hover.x, hover.y);
     else if (tool === 'erase' && inBounds(hover.x, hover.y)) {
       ctx.fillStyle = 'rgba(220, 50, 50, 0.3)';
-      ctx.fillRect(hover.x * cellPx, hover.y * cellPx, cellPx, cellPx);
+      for (const c of eraseChanges([hover])) {
+        ctx.fillRect(c.x * cellPx, c.y * cellPx, cellPx, cellPx);
+      }
     }
   }
 }
@@ -616,9 +632,8 @@ function drawDragOverlay() {
   const plan = actionPlan(targetTool, drag.start, drag.end);
 
   if (targetTool === 'erase') {
-    for (const c of plan.cells) {
-      if (!inBounds(c.x, c.y)) continue;
-      ctx.fillStyle = 'rgba(220, 50, 50, 0.4)';
+    ctx.fillStyle = 'rgba(220, 50, 50, 0.4)';
+    for (const c of eraseChanges(plan.cells)) {
       ctx.fillRect(c.x * cellPx, c.y * cellPx, cellPx, cellPx);
     }
   }
@@ -733,14 +748,46 @@ window.addEventListener('mouseup', e => {
   draw();
 });
 
-// Bus draws traces; everything else paints its own state. Erase clears.
+// Bus draws traces; everything else paints its own state. Erase is special
+// (see eraseChanges) so it keeps its own target sentinel.
 function targetStateFor(t) {
-  if (t === 'erase') return 'empty';
-  if (t === 'bus')   return 'trace';
+  if (t === 'bus') return 'trace';
   return t;
 }
 
+// Erase has two modes, picked from the selected area:
+//  - If any cell in the area is a pad (trace/hole), only those pads change,
+//    becoming plain board. Existing boards and empty cells are left alone.
+//  - Otherwise (boards and/or empty only), every non-empty cell in the area
+//    is cleared to empty.
+// Returns only the cells that actually change; callers can rely on that for
+// previews and overlays.
+function eraseChanges(planCells) {
+  let hasPad = false;
+  for (const c of planCells) {
+    if (inBounds(c.x, c.y) && isPadState(cells[c.y][c.x])) { hasPad = true; break; }
+  }
+  const out = [];
+  for (const c of planCells) {
+    if (!inBounds(c.x, c.y)) continue;
+    const cur = cells[c.y][c.x];
+    if (hasPad) {
+      if (isPadState(cur)) out.push({ x: c.x, y: c.y, newState: 'board' });
+    } else if (cur !== 'empty') {
+      out.push({ x: c.x, y: c.y, newState: 'empty' });
+    }
+  }
+  return out;
+}
+
 function applyPlanToState(plan, target) {
+  if (target === 'erase') {
+    for (const c of eraseChanges(plan.cells)) {
+      cells[c.y][c.x] = c.newState;
+      for (const k of linksTouching(c.x, c.y)) links.delete(k);
+    }
+    return;
+  }
   // 1. Cell states.
   for (const c of plan.cells) {
     if (!inBounds(c.x, c.y)) continue;
