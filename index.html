@@ -546,7 +546,7 @@ function busSegments(s, e) {
 // --- drawing ---
 
 // Per-frame overrides so previews share the same neighbor-aware renderer.
-let overrides = { cells: new Map(), addLinks: new Set(), removeLinks: new Set() };
+let overrides = { cells: new Map(), addLinks: new Set(), removeLinks: new Set(), removeTexts: new Set() };
 function ovKey(x, y) { return y * 10000 + x; }
 
 function paintCellOverride(map, x, y, state) {
@@ -562,13 +562,20 @@ function buildOverrides() {
   const cMap = new Map();
   const addL = new Set();
   const remL = new Set();
+  const remT = new Set();
+
+  function applyErasePlan(planCells) {
+    const ep = erasePlan(planCells);
+    for (const c of ep.cellChanges) {
+      cMap.set(ovKey(c.x, c.y), c.newState);
+      for (const k of linksTouching(c.x, c.y)) remL.add(k);
+    }
+    for (const i of ep.textIndices) remT.add(i);
+  }
 
   function applyPlan(plan, target) {
     if (target === 'erase') {
-      for (const c of eraseChanges(plan.cells)) {
-        cMap.set(ovKey(c.x, c.y), c.newState);
-        for (const k of linksTouching(c.x, c.y)) remL.add(k);
-      }
+      applyErasePlan(plan.cells);
       return;
     }
     for (const c of plan.cells) paintCellOverride(cMap, c.x, c.y, target);
@@ -605,10 +612,7 @@ function buildOverrides() {
     } else {
       const target = targetStateFor(tool);
       if (target === 'erase') {
-        for (const c of eraseChanges([hover])) {
-          cMap.set(ovKey(c.x, c.y), c.newState);
-          for (const k of linksTouching(c.x, c.y)) remL.add(k);
-        }
+        applyErasePlan([hover]);
       } else {
         // Single-cell preview at hover (no link changes for a one-cell stub).
         paintCellOverride(cMap, hover.x, hover.y, target);
@@ -622,7 +626,7 @@ function buildOverrides() {
     }
   }
 
-  return { cells: cMap, addLinks: addL, removeLinks: remL };
+  return { cells: cMap, addLinks: addL, removeLinks: remL, removeTexts: remT };
 }
 
 function isPadState(s) { return s === 'trace' || s === 'hole'; }
@@ -671,16 +675,28 @@ function draw() {
     else if (tool === 'text') drawTextPreview(hover.x, hover.y);
     else if (tool === 'erase' && inBounds(hover.x, hover.y)) {
       ctx.fillStyle = 'rgba(220, 50, 50, 0.3)';
-      for (const c of eraseChanges([hover])) {
-        ctx.fillRect(c.x * cellPx, c.y * cellPx, cellPx, cellPx);
-      }
+      paintErasePreviewCells(erasePlan([hover]));
+    }
+  }
+}
+
+function paintErasePreviewCells(ep) {
+  for (const c of ep.cellChanges) {
+    ctx.fillRect(c.x * cellPx, c.y * cellPx, cellPx, cellPx);
+  }
+  for (const i of ep.textIndices) {
+    for (const tc of textCells(texts[i])) {
+      if (inBounds(tc.x, tc.y)) ctx.fillRect(tc.x * cellPx, tc.y * cellPx, cellPx, cellPx);
     }
   }
 }
 
 function drawTexts() {
   ctx.fillStyle = COLOR_TEXT;
-  for (const t of texts) drawTextPixels(t);
+  for (let i = 0; i < texts.length; i++) {
+    if (overrides.removeTexts.has(i)) continue;
+    drawTextPixels(texts[i]);
+  }
 }
 
 function drawTextPixels(textObj) {
@@ -772,9 +788,7 @@ function drawDragOverlay() {
 
   if (targetTool === 'erase') {
     ctx.fillStyle = 'rgba(220, 50, 50, 0.4)';
-    for (const c of eraseChanges(plan.cells)) {
-      ctx.fillRect(c.x * cellPx, c.y * cellPx, cellPx, cellPx);
-    }
+    paintErasePreviewCells(erasePlan(plan.cells));
   }
 
   if (!plan.cells.length) return;
@@ -873,6 +887,21 @@ function textAtOrigin(x, y) {
   return texts.findIndex(t => t.x === x && t.y === y);
 }
 
+// Cells covered by a text label — one per character following its rotation.
+function textCells(textObj) {
+  const len = Math.max(1, textObj.text.length);
+  const out = [];
+  for (let i = 0; i < len; i++) {
+    switch (textObj.rot) {
+      case 90:  out.push({ x: textObj.x,     y: textObj.y + i }); break;
+      case 180: out.push({ x: textObj.x - i, y: textObj.y     }); break;
+      case 270: out.push({ x: textObj.x,     y: textObj.y - i }); break;
+      default:  out.push({ x: textObj.x + i, y: textObj.y     }); break;
+    }
+  }
+  return out;
+}
+
 // --- input ---
 function cellAt(e) {
   const rect = canvas.getBoundingClientRect();
@@ -935,42 +964,59 @@ window.addEventListener('mouseup', e => {
 });
 
 // Bus draws traces; everything else paints its own state. Erase is special
-// (see eraseChanges) so it keeps its own target sentinel.
+// (see erasePlan) so it keeps its own target sentinel.
 function targetStateFor(t) {
   if (t === 'bus') return 'trace';
   return t;
 }
 
-// Erase has two modes, picked from the selected area:
-//  - If any cell in the area is a pad (trace/hole), only those pads change,
-//    becoming plain board. Existing boards and empty cells are left alone.
+// Erase has two modes, picked from what the selected area contains:
+//  - If the area touches any pad (trace/hole) OR any text label, only those
+//    pads convert to plain board and the touched text labels are removed.
+//    Existing boards and empty cells are left alone.
 //  - Otherwise (boards and/or empty only), every non-empty cell in the area
 //    is cleared to empty.
-// Returns only the cells that actually change; callers can rely on that for
-// previews and overlays.
-function eraseChanges(planCells) {
+// Returns both the cell changes and the indices of texts to remove; callers
+// use the same plan for previews, overlays, and the committed action.
+function erasePlan(planCells) {
+  const planSet = new Set();
+  for (const c of planCells) {
+    if (inBounds(c.x, c.y)) planSet.add(c.x + ',' + c.y);
+  }
+  const textIndices = [];
+  for (let i = 0; i < texts.length; i++) {
+    for (const tc of textCells(texts[i])) {
+      if (planSet.has(tc.x + ',' + tc.y)) { textIndices.push(i); break; }
+    }
+  }
   let hasPad = false;
   for (const c of planCells) {
     if (inBounds(c.x, c.y) && isPadState(cells[c.y][c.x])) { hasPad = true; break; }
   }
-  const out = [];
+  const trigger = hasPad || textIndices.length > 0;
+  const cellChanges = [];
   for (const c of planCells) {
     if (!inBounds(c.x, c.y)) continue;
     const cur = cells[c.y][c.x];
-    if (hasPad) {
-      if (isPadState(cur)) out.push({ x: c.x, y: c.y, newState: 'board' });
+    if (trigger) {
+      if (isPadState(cur)) cellChanges.push({ x: c.x, y: c.y, newState: 'board' });
     } else if (cur !== 'empty') {
-      out.push({ x: c.x, y: c.y, newState: 'empty' });
+      cellChanges.push({ x: c.x, y: c.y, newState: 'empty' });
     }
   }
-  return out;
+  return { cellChanges, textIndices };
 }
 
 function applyPlanToState(plan, target) {
   if (target === 'erase') {
-    for (const c of eraseChanges(plan.cells)) {
+    const ep = erasePlan(plan.cells);
+    for (const c of ep.cellChanges) {
       cells[c.y][c.x] = c.newState;
       for (const k of linksTouching(c.x, c.y)) links.delete(k);
+    }
+    // Splice texts in reverse so the indices stay valid as we remove.
+    for (let i = ep.textIndices.length - 1; i >= 0; i--) {
+      texts.splice(ep.textIndices[i], 1);
     }
     return;
   }
