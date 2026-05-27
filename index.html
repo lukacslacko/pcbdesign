@@ -41,11 +41,17 @@
   .legend { display: flex; gap: 12px; align-items: center; padding: 6px 10px; background: #252525; border-bottom: 1px solid #444; font-size: 12px; color: #aaa; }
   .legend .swatch { display: inline-flex; align-items: center; gap: 6px; }
   .legend .sq { width: 14px; height: 14px; border: 1px solid #555; border-radius: 2px; }
-  .dip-only, .bus-only { display: none !important; }
+  .dip-only, .bus-only, .text-only { display: none !important; }
   body.dip-active .dip-only { display: flex !important; }
   body.dip-active .dip-only.sep { display: block !important; }
   body.bus-active .bus-only { display: flex !important; }
   body.bus-active .bus-only.sep { display: block !important; }
+  body.text-active .text-only { display: flex !important; }
+  body.text-active .text-only.sep { display: block !important; }
+  .toolbar input[type=text] {
+    background: #1e1e1e; color: #ddd; border: 1px solid #555;
+    padding: 4px 6px; border-radius: 3px; font-family: inherit; min-width: 140px;
+  }
   .canvas-wrap { flex: 1; overflow: auto; padding: 16px; background: #181818; }
   canvas { background: #f4f4f4; box-shadow: 0 6px 24px rgba(0,0,0,.5); display: block; cursor: crosshair; image-rendering: pixelated; }
   .hint { font-size: 11px; color: #888; padding: 0 10px 4px; }
@@ -61,6 +67,7 @@
       <button data-tool="bus"   title="Bus — parallel traces (S)">Bus</button>
       <button data-tool="hole"  title="Hole line (H)">Hole</button>
       <button data-tool="dip"   title="DIP package (D)">DIP</button>
+      <button data-tool="text"  title="Text label (X)">Text</button>
     </div>
     <div class="sep dip-only"></div>
     <div class="group dip-only">
@@ -74,6 +81,13 @@
     <div class="group bus-only">
       <label>Lines</label><input type="number" id="busLines" value="2" min="1" max="10">
       <span style="color:#777;font-size:11px">1–9 / 0 → 1–9 / 10 lines</span>
+    </div>
+    <div class="sep text-only"></div>
+    <div class="group text-only">
+      <label>Label</label>
+      <input type="text" id="textInput" placeholder="e.g. R1">
+      <button id="textRotate" title="Rotate orientation (R)">Rot 0°</button>
+      <span style="color:#777;font-size:11px">Click to place · empty label deletes at click</span>
     </div>
     <div class="sep"></div>
     <div class="group">
@@ -109,11 +123,12 @@
     <span class="swatch"><span class="sq" style="background:#d4a017;position:relative">
       <span style="position:absolute;inset:32% 32%;background:#1a1a1a;border-radius:1px"></span>
     </span> Hole (0.8 mm square, 0.18 mm bottom)</span>
+    <span class="swatch"><span class="sq" style="background:#1d6b3e;color:#1a1a1a;font-size:10px;display:flex;align-items:center;justify-content:center;font-family:ui-monospace,monospace">A</span> Text label (0.4 mm pixels, embedded between board layers)</span>
     <span class="swatch" style="margin-left:auto">Cell = 2.54 mm (0.1″)</span>
   </div>
   <div class="hint">
-    <kbd>E</kbd>/<kbd>B</kbd>/<kbd>T</kbd>/<kbd>S</kbd>/<kbd>H</kbd>/<kbd>D</kbd> pick tools.
-    Board / Erase = rectangle drag · Trace / Hole = axis-parallel line · Bus = parallel lines (perpendicular offset follows drag direction) · DIP = click to place. Right-drag always erases. <kbd>⌘/Ctrl+Z</kbd> undo · <kbd>⌘/Ctrl+Shift+Z</kbd> redo.
+    <kbd>E</kbd>/<kbd>B</kbd>/<kbd>T</kbd>/<kbd>S</kbd>/<kbd>H</kbd>/<kbd>D</kbd>/<kbd>X</kbd> pick tools.
+    Board / Erase = rectangle drag · Trace / Hole = axis-parallel line · Bus = parallel lines (perpendicular offset follows drag direction) · DIP / Text = click to place · <kbd>R</kbd> rotates DIP and Text. Right-drag always erases. <kbd>⌘/Ctrl+Z</kbd> undo · <kbd>⌘/Ctrl+Shift+Z</kbd> redo.
   </div>
   <div class="canvas-wrap" id="wrap"><canvas id="grid"></canvas></div>
 
@@ -136,11 +151,74 @@ const COLOR_EMPTY = '#f4f4f4';
 const COLOR_BOARD = '#1d6b3e';
 const COLOR_TRACE = '#d4a017';
 const COLOR_HOLE  = '#1a1a1a';
+const COLOR_TEXT  = '#1a1a1a';
+
+// --- text / font constants ---
+// Custom 3x5 pixel font. One glyph centered in each cell (2.54 mm).
+// 0.4 mm pixel → 1.2 × 2.0 mm glyph, leaving comfortable margin.
+const MM_PIXEL    = 0.4;
+const GLYPH_COLS  = 3;
+const GLYPH_ROWS  = 5;
+
+// '#' = ink, '.' = blank. Rows are top-to-bottom.
+const FONT = {
+  ' ': ['...', '...', '...', '...', '...'],
+  'A': ['.#.', '#.#', '###', '#.#', '#.#'],
+  'B': ['##.', '#.#', '##.', '#.#', '##.'],
+  'C': ['.##', '#..', '#..', '#..', '.##'],
+  'D': ['##.', '#.#', '#.#', '#.#', '##.'],
+  'E': ['###', '#..', '##.', '#..', '###'],
+  'F': ['###', '#..', '##.', '#..', '#..'],
+  'G': ['.##', '#..', '#.#', '#.#', '.##'],
+  'H': ['#.#', '#.#', '###', '#.#', '#.#'],
+  'I': ['###', '.#.', '.#.', '.#.', '###'],
+  'J': ['..#', '..#', '..#', '#.#', '.#.'],
+  'K': ['#.#', '#.#', '##.', '#.#', '#.#'],
+  'L': ['#..', '#..', '#..', '#..', '###'],
+  'M': ['#.#', '###', '###', '#.#', '#.#'],
+  'N': ['#.#', '###', '###', '###', '#.#'],
+  'O': ['.#.', '#.#', '#.#', '#.#', '.#.'],
+  'P': ['##.', '#.#', '##.', '#..', '#..'],
+  'Q': ['.#.', '#.#', '#.#', '###', '.##'],
+  'R': ['##.', '#.#', '##.', '#.#', '#.#'],
+  'S': ['.##', '#..', '.#.', '..#', '##.'],
+  'T': ['###', '.#.', '.#.', '.#.', '.#.'],
+  'U': ['#.#', '#.#', '#.#', '#.#', '###'],
+  'V': ['#.#', '#.#', '#.#', '#.#', '.#.'],
+  'W': ['#.#', '#.#', '###', '###', '#.#'],
+  'X': ['#.#', '#.#', '.#.', '#.#', '#.#'],
+  'Y': ['#.#', '#.#', '.#.', '.#.', '.#.'],
+  'Z': ['###', '..#', '.#.', '#..', '###'],
+  '0': ['.#.', '#.#', '#.#', '#.#', '.#.'],
+  '1': ['.#.', '##.', '.#.', '.#.', '###'],
+  '2': ['##.', '..#', '.#.', '#..', '###'],
+  '3': ['##.', '..#', '.#.', '..#', '##.'],
+  '4': ['#.#', '#.#', '###', '..#', '..#'],
+  '5': ['###', '#..', '##.', '..#', '##.'],
+  '6': ['.##', '#..', '##.', '#.#', '.#.'],
+  '7': ['###', '..#', '.#.', '#..', '#..'],
+  '8': ['.#.', '#.#', '.#.', '#.#', '.#.'],
+  '9': ['.#.', '#.#', '.##', '..#', '##.'],
+  '-': ['...', '...', '###', '...', '...'],
+  '+': ['...', '.#.', '###', '.#.', '...'],
+  '.': ['...', '...', '...', '...', '.#.'],
+  ',': ['...', '...', '...', '.#.', '#..'],
+  ':': ['...', '.#.', '...', '.#.', '...'],
+  '/': ['..#', '..#', '.#.', '#..', '#..'],
+  '*': ['...', '#.#', '.#.', '#.#', '...'],
+  '=': ['...', '###', '...', '###', '...'],
+  '(': ['..#', '.#.', '.#.', '.#.', '..#'],
+  ')': ['#..', '.#.', '.#.', '.#.', '#..'],
+  '!': ['.#.', '.#.', '.#.', '...', '.#.'],
+  '?': ['##.', '..#', '.#.', '...', '.#.'],
+  '#': ['#.#', '###', '#.#', '###', '#.#'],
+};
 
 // --- state ---
 let cols = 40, rows = 40;
 let cells = makeCells(cols, rows);
 let links = new Set(); // edge keys; see linkKey()
+let texts = [];        // [{ x, y, rot, text }]   x/y = origin cell, rot in {0,90,180,270}
 let tool = 'board';
 let cellPx = 28;
 let drag = null;       // { start:{x,y}, end:{x,y}, tool, button }
@@ -161,6 +239,10 @@ const DIP_ROW_BROAD   = 6;
 
 // Bus options
 let busLines = 2;
+
+// Text options
+let textInput = '';
+let textRot = 0;       // 0, 90, 180, 270
 
 const canvas = document.getElementById('grid');
 const ctx = canvas.getContext('2d');
@@ -207,6 +289,7 @@ function selectTool(t) {
   }
   document.body.classList.toggle('dip-active', t === 'dip');
   document.body.classList.toggle('bus-active', t === 'bus');
+  document.body.classList.toggle('text-active', t === 'text');
   canvas.style.cursor = TOOL_CURSORS[t] || 'crosshair';
   draw();
 }
@@ -249,6 +332,9 @@ window.addEventListener('keydown', e => {
     if (e.key >= '1' && e.key <= '9') { setBusLines(parseInt(e.key, 10)); e.preventDefault(); return; }
     if (e.key === '0')                { setBusLines(10); e.preventDefault(); return; }
   }
+  if (tool === 'text') {
+    if (k === 'r') { rotateText(); e.preventDefault(); return; }
+  }
 
   if      (k === 'e') selectTool('erase');
   else if (k === 'b') selectTool('board');
@@ -256,7 +342,14 @@ window.addEventListener('keydown', e => {
   else if (k === 's') selectTool('bus');
   else if (k === 'h') selectTool('hole');
   else if (k === 'd') selectTool('dip');
+  else if (k === 'x') selectTool('text');
 });
+
+function rotateText() {
+  textRot = (textRot + 90) % 360;
+  document.getElementById('textRotate').textContent = 'Rot ' + textRot + '°';
+  draw();
+}
 
 // --- tool cursors (built as SVG data URLs) ---
 function cursorUrl(inner) {
@@ -270,6 +363,7 @@ const TOOL_CURSORS = {
   bus:   cursorUrl(`<rect x='2' y='3' width='20' height='3' fill='#d4a017' stroke='#7a5a0c' stroke-width='0.5'/><rect x='2' y='10' width='20' height='3' fill='#d4a017' stroke='#7a5a0c' stroke-width='0.5'/><rect x='2' y='17' width='20' height='3' fill='#d4a017' stroke='#7a5a0c' stroke-width='0.5'/>`),
   hole:  cursorUrl(`<rect x='4' y='4' width='16' height='16' fill='rgba(29,107,62,0.7)' stroke='#0e3a22' stroke-width='1'/><rect x='8' y='8' width='8' height='8' fill='#d4a017' stroke='#7a5a0c' stroke-width='1'/><rect x='10' y='10' width='4' height='4' fill='#1a1a1a'/>`),
   dip:   cursorUrl(`<rect x='8' y='3' width='8' height='18' rx='1' fill='#333' stroke='#111' stroke-width='1'/><circle cx='10' cy='7' r='1.2' fill='#d4a017'/><circle cx='14' cy='7' r='1.2' fill='#d4a017'/><circle cx='10' cy='12' r='1.2' fill='#d4a017'/><circle cx='14' cy='12' r='1.2' fill='#d4a017'/><circle cx='10' cy='17' r='1.2' fill='#d4a017'/><circle cx='14' cy='17' r='1.2' fill='#d4a017'/>`),
+  text:  cursorUrl(`<rect x='4' y='4' width='16' height='16' fill='rgba(29,107,62,0.7)' stroke='#0e3a22' stroke-width='1'/><text x='12' y='17' font-family='monospace' font-size='14' fill='#1a1a1a' text-anchor='middle' font-weight='bold'>A</text>`),
 };
 
 // DIP controls
@@ -307,6 +401,13 @@ document.getElementById('busLines').addEventListener('input', e => {
   draw();
 });
 
+// Text controls
+document.getElementById('textInput').addEventListener('input', e => {
+  textInput = e.target.value;
+  draw();
+});
+document.getElementById('textRotate').addEventListener('click', rotateText);
+
 // --- toolbar wiring ---
 document.getElementById('resize').addEventListener('click', () => {
   const c = clampInt(document.getElementById('cols').value, 2, 400, 40);
@@ -320,6 +421,7 @@ document.getElementById('newBtn').addEventListener('click', () => {
   pushHistory();
   cells = makeCells(cols, rows);
   links = new Set();
+  texts = [];
   autosave(); draw();
 });
 document.getElementById('saveBtn').addEventListener('click', save);
@@ -359,6 +461,7 @@ function resizeGrid(c, r) {
     else              { if (x >= 0 && x < c && y >= 0 && y + 1 < r) keep.add(k); }
   }
   cells = next; cols = c; rows = r; links = keep;
+  texts = texts.filter(t => t.x >= 0 && t.x < cols && t.y >= 0 && t.y < rows);
   document.getElementById('cols').value = cols;
   document.getElementById('rows').value = rows;
   setCanvasSize(); autosave(); draw();
@@ -560,10 +663,12 @@ function draw() {
       drawCellShape(x, y, effectiveState(x, y));
 
   drawGrid();
+  drawTexts();
 
   if (drag) drawDragOverlay();
   if (!drag && hover) {
     if (tool === 'dip') drawDipOutline(hover.x, hover.y);
+    else if (tool === 'text') drawTextPreview(hover.x, hover.y);
     else if (tool === 'erase' && inBounds(hover.x, hover.y)) {
       ctx.fillStyle = 'rgba(220, 50, 50, 0.3)';
       for (const c of eraseChanges([hover])) {
@@ -571,6 +676,40 @@ function draw() {
       }
     }
   }
+}
+
+function drawTexts() {
+  ctx.fillStyle = COLOR_TEXT;
+  for (const t of texts) drawTextPixels(t);
+}
+
+function drawTextPixels(textObj) {
+  const pxPerMm = cellPx / MM_CELL;
+  const pxSize  = MM_PIXEL * pxPerMm;
+  // Slightly oversize the pixel by half a device pixel to avoid hairline gaps.
+  const drawSize = pxSize + 0.5;
+  for (const p of textPixels(textObj)) {
+    const sx = p.cxMm * pxPerMm - pxSize / 2;
+    const sy = p.cyMm * pxPerMm - pxSize / 2;
+    ctx.fillRect(sx, sy, drawSize, drawSize);
+  }
+}
+
+function drawTextPreview(ox, oy) {
+  if (!inBounds(ox, oy)) return;
+  const trimmed = textInput.trim();
+  // Show a faint outline at the click cell + the current label as a ghost.
+  ctx.strokeStyle = '#2a90ff';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([4, 3]);
+  ctx.strokeRect(ox * cellPx + 1, oy * cellPx + 1, cellPx - 2, cellPx - 2);
+  ctx.setLineDash([]);
+  if (trimmed.length === 0) return;
+  ctx.save();
+  ctx.globalAlpha = 0.55;
+  ctx.fillStyle = COLOR_TEXT;
+  drawTextPixels({ x: ox, y: oy, rot: textRot, text: trimmed });
+  ctx.restore();
 }
 
 function drawGrid() {
@@ -691,6 +830,49 @@ function drawDipOutline(ox, oy) {
   ctx.setLineDash([]);
 }
 
+// --- text geometry ---
+// Yields { cxMm, cyMm } centers (design mm coords; y grows downward like the
+// canvas) for every "ink" pixel in a text. Rotation applies to the whole
+// string: 0 reads right, 90 reads downward, 180 reads left, 270 reads upward.
+function* textPixels(textObj) {
+  const { x, y, rot, text } = textObj;
+  const cellMm = MM_CELL;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i].toUpperCase();
+    const glyph = FONT[ch] || FONT[' '];
+    // Origin cell for this character.
+    let ccx, ccy;
+    switch (rot) {
+      case 90:  ccx = x;     ccy = y + i; break;
+      case 180: ccx = x - i; ccy = y;     break;
+      case 270: ccx = x;     ccy = y - i; break;
+      default:  ccx = x + i; ccy = y;     break;
+    }
+    const centerX = (ccx + 0.5) * cellMm;
+    const centerY = (ccy + 0.5) * cellMm;
+    for (let r = 0; r < GLYPH_ROWS; r++) {
+      for (let c = 0; c < GLYPH_COLS; c++) {
+        if (glyph[r][c] !== '#') continue;
+        // Pixel offset from glyph center, in mm (canvas-y down).
+        const lx = (c - (GLYPH_COLS - 1) / 2) * MM_PIXEL;
+        const ly = (r - (GLYPH_ROWS - 1) / 2) * MM_PIXEL;
+        let rx, ry;
+        switch (rot) {
+          case 90:  rx = -ly; ry =  lx; break;
+          case 180: rx = -lx; ry = -ly; break;
+          case 270: rx =  ly; ry = -lx; break;
+          default:  rx =  lx; ry =  ly; break;
+        }
+        yield { cxMm: centerX + rx, cyMm: centerY + ry };
+      }
+    }
+  }
+}
+
+function textAtOrigin(x, y) {
+  return texts.findIndex(t => t.x === x && t.y === y);
+}
+
 // --- input ---
 function cellAt(e) {
   const rect = canvas.getBoundingClientRect();
@@ -707,6 +889,10 @@ canvas.addEventListener('mousedown', e => {
   const p = cellAt(e);
   if (tool === 'dip' && e.button === 0) {
     placeDip(p.x, p.y);
+    return;
+  }
+  if (tool === 'text' && e.button === 0) {
+    placeText(p.x, p.y);
     return;
   }
   drag = { start: p, end: p, tool: e.button === 2 ? 'erase' : tool, button: e.button };
@@ -830,12 +1016,29 @@ function placeDip(ox, oy) {
   draw();
 }
 
+// Click with the text tool: replace any existing text at the clicked cell;
+// an empty input just deletes whatever was there.
+function placeText(ox, oy) {
+  if (!inBounds(ox, oy)) return;
+  const existing = textAtOrigin(ox, oy);
+  const trimmed = textInput.trim();
+  if (existing < 0 && trimmed.length === 0) return; // nothing to do
+  pushHistory();
+  if (existing >= 0) texts.splice(existing, 1);
+  if (trimmed.length > 0) {
+    texts.push({ x: ox, y: oy, rot: textRot, text: trimmed });
+  }
+  autosave();
+  draw();
+}
+
 // --- undo / redo ---
 function snapshot() {
   return {
     cols, rows,
     cells: cells.map(row => row.slice()),
     links: [...links],
+    texts: texts.map(t => ({...t})),
   };
 }
 
@@ -843,6 +1046,7 @@ function restoreSnapshot(s) {
   cols = s.cols; rows = s.rows;
   cells = s.cells.map(row => row.slice());
   links = new Set(s.links);
+  texts = Array.isArray(s.texts) ? s.texts.map(t => ({...t})) : [];
   document.getElementById('cols').value = cols;
   document.getElementById('rows').value = rows;
   setCanvasSize();
@@ -883,7 +1087,7 @@ document.getElementById('redoBtn').addEventListener('click', redo);
 
 // --- persistence ---
 function serialize() {
-  return { version: 2, cols, rows, cellMm: MM_CELL, cells, links: [...links] };
+  return { version: 3, cols, rows, cellMm: MM_CELL, cells, links: [...links], texts };
 }
 function deserialize(data) {
   if (!data || !Array.isArray(data.cells)) throw new Error('Invalid file');
@@ -903,6 +1107,9 @@ function deserialize(data) {
       }
     }
   }
+  texts = Array.isArray(data.texts)
+    ? data.texts.filter(t => inBounds(t.x, t.y)).map(t => ({...t}))
+    : [];
   document.getElementById('cols').value = cols;
   document.getElementById('rows').value = rows;
   setCanvasSize(); draw();
@@ -946,20 +1153,16 @@ function restoreAutosave() {
 }
 
 // --- OpenSCAD export ---
+//
+// Layered, 3-part output. The print is built with the transparent layer first
+// (Z=0..0.1), then the text glyphs (Z=0.1..0.4, black), then the heat-resistant
+// slab above that (Z=0.1..0.9, with trace grooves engraved into its bottom 0.3
+// mm and text-shaped voids filled by part 2). The build plate side ends up as
+// the viewing/IC side of the finished board; traces and labels live on the
+// underside and are visible through the transparent layer.
 function exportScad() {
   const f = n => Number(n.toFixed(4)).toString();
   const out = [];
-  out.push('// PCB design — generated by PCB Designer');
-  out.push(`// grid: ${cols} x ${rows} cells, cell = ${MM_CELL} mm`);
-  out.push(`// board size: ${f(cols*MM_CELL)} x ${f(rows*MM_CELL)} x ${MM_BOARD} mm`);
-  out.push('');
-  out.push(`cell        = ${MM_CELL};`);
-  out.push(`board_h     = ${MM_BOARD};`);
-  out.push(`trace_h     = ${MM_TRACE};`);
-  out.push(`trace_w     = ${MM_TRACE_W};`);
-  out.push(`hole_w      = ${MM_HOLE};`);
-  out.push(`hole_bottom = ${MM_HOLE_BOTTOM};   // unprinted layer left at the bottom of every hole`);
-  out.push('');
 
   // Coordinate lists. Y flipped so +Y is "up" in OpenSCAD.
   const fy = y => rows - 1 - y;
@@ -980,7 +1183,6 @@ function exportScad() {
       }
     }
   }
-  // Connectors come from the link graph, not adjacency.
   for (const k of links) {
     const m = /^([hv]):(\d+),(\d+)$/.exec(k);
     if (!m) continue;
@@ -998,54 +1200,124 @@ function exportScad() {
     }
   }
 
-  if (baseCells.length === 0) {
+  // Text pixels — each is the lower-left corner (SCAD mm) of one ink pixel.
+  const textPix = [];
+  const yMaxMm = rows * MM_CELL;
+  for (const t of texts) {
+    for (const p of textPixels(t)) {
+      const sx = p.cxMm - MM_PIXEL / 2;
+      const sy = yMaxMm - p.cyMm - MM_PIXEL / 2;
+      textPix.push([sx, sy]);
+    }
+  }
+
+  const transparentH = 0.1;
+  const traceZ0      = 0.1;
+  const traceZ1      = 0.4;
+  const hrTop        = transparentH + MM_BOARD + MM_TRACE; // 0.9
+  const textZ0       = traceZ0;
+  const textZ1       = traceZ1;
+
+  out.push('// PCB design — generated by PCB Designer');
+  out.push(`// grid: ${cols} x ${rows} cells, cell = ${MM_CELL} mm`);
+  out.push(`// board size: ${f(cols*MM_CELL)} x ${f(rows*MM_CELL)} x ${f(hrTop)} mm`);
+  out.push('//');
+  out.push('// Multi-material layout (print Z = 0 is build plate / viewing side):');
+  out.push(`//   ${f(0)} – ${f(transparentH)}  transparent slab (part 1, no holes, no text)`);
+  out.push(`//   ${f(textZ0)} – ${f(textZ1)}  text glyphs (part 2, black)`);
+  out.push(`//   ${f(transparentH)} – ${f(hrTop)}  heat-resistant slab (part 3) with trace grooves`);
+  out.push(`//                            ${f(traceZ0)} – ${f(traceZ1)} on its underside and`);
+  out.push('//                            text-shaped voids filled by part 2');
+  out.push('//');
+  out.push('// Set `part` below to export each piece individually for slicing.');
+  out.push('');
+  out.push('part = "all";   // "all" | "p1" (transparent) | "p2" (text) | "p3" (heat-resistant)');
+  out.push('');
+  out.push(`cell           = ${MM_CELL};`);
+  out.push(`transparent_h  = ${transparentH};`);
+  out.push(`hr_top         = ${f(hrTop)};`);
+  out.push(`trace_w        = ${MM_TRACE_W};`);
+  out.push(`trace_z0       = ${traceZ0};`);
+  out.push(`trace_z1       = ${traceZ1};`);
+  out.push(`hole_w         = ${MM_HOLE};`);
+  out.push(`text_z0        = ${textZ0};`);
+  out.push(`text_z1        = ${textZ1};`);
+  out.push(`pixel_mm       = ${MM_PIXEL};`);
+  out.push('eps            = 0.01;');
+  out.push('');
+
+  if (baseCells.length === 0 && textPix.length === 0) {
     out.push('// (empty design)');
     downloadText(out.join('\n'), 'pcb.scad');
     return;
   }
 
-  out.push('module base_cell(p) { translate([p[0]*cell, p[1]*cell, 0]) cube([cell, cell, board_h]); }');
-  out.push('module pad(p) {');
+  out.push('module transparent_slab(p) {');
+  out.push('  translate([p[0]*cell, p[1]*cell, 0])');
+  out.push('    cube([cell, cell, transparent_h]);');
+  out.push('}');
+  out.push('module hr_slab(p) {');
+  out.push('  translate([p[0]*cell, p[1]*cell, transparent_h])');
+  out.push('    cube([cell, cell, hr_top - transparent_h]);');
+  out.push('}');
+  out.push('module pad_groove(p) {');
   out.push('  translate([p[0]*cell + (cell-trace_w)/2,');
   out.push('             p[1]*cell + (cell-trace_w)/2,');
-  out.push('             board_h])');
-  out.push('    cube([trace_w, trace_w, trace_h]);');
+  out.push('             trace_z0 - eps])');
+  out.push('    cube([trace_w, trace_w, trace_z1 - trace_z0 + eps]);');
   out.push('}');
-  out.push('module conn_east(p) {  // bridge to neighbor at x+1');
+  out.push('module conn_east_groove(p) {');
   out.push('  translate([p[0]*cell + (cell+trace_w)/2,');
   out.push('             p[1]*cell + (cell-trace_w)/2,');
-  out.push('             board_h])');
-  out.push('    cube([cell - trace_w, trace_w, trace_h]);');
+  out.push('             trace_z0 - eps])');
+  out.push('    cube([cell - trace_w, trace_w, trace_z1 - trace_z0 + eps]);');
   out.push('}');
-  out.push('module conn_south(p) {  // bridge to neighbor at y+1 (lower in SCAD Y)');
+  out.push('module conn_south_groove(p) {');
   out.push('  translate([p[0]*cell + (cell-trace_w)/2,');
   out.push('             p[1]*cell - (cell-trace_w)/2,');
-  out.push('             board_h])');
-  out.push('    cube([trace_w, cell - trace_w, trace_h]);');
+  out.push('             trace_z0 - eps])');
+  out.push('    cube([trace_w, cell - trace_w, trace_z1 - trace_z0 + eps]);');
   out.push('}');
-  out.push('module hole_cut(p)  {');
+  out.push('module hole_cut(p) {');
   out.push('  translate([p[0]*cell + (cell-hole_w)/2,');
   out.push('             p[1]*cell + (cell-hole_w)/2,');
-  out.push('             hole_bottom])');
-  out.push('    cube([hole_w, hole_w, board_h + trace_h]); // overshoots top by design');
+  out.push('             transparent_h - eps])');
+  out.push('    cube([hole_w, hole_w, hr_top - transparent_h + 2*eps]);');
+  out.push('}');
+  out.push('module text_pixel(p) {');
+  out.push('  translate([p[0], p[1], text_z0])');
+  out.push('    cube([pixel_mm, pixel_mm, text_z1 - text_z0]);');
   out.push('}');
   out.push('');
-  const arr = list => '[' + list.map(p => `[${p[0]},${p[1]}]`).join(',') + ']';
+
+  const arr = list => '[' + list.map(p => `[${typeof p[0] === 'number' ? f(p[0]) : p[0]},${typeof p[1] === 'number' ? f(p[1]) : p[1]}]`).join(',') + ']';
   out.push('base_cells = ' + arr(baseCells) + ';');
   out.push('pads       = ' + arr(pads)      + ';');
   out.push('conn_e     = ' + arr(connE)     + ';');
   out.push('conn_s     = ' + arr(connS)     + ';');
   out.push('hole_cells = ' + arr(holeCells) + ';');
+  out.push('text_pix   = ' + arr(textPix)   + ';');
   out.push('');
-  out.push('difference() {');
-  out.push('  union() {');
-  out.push('    for (p = base_cells) base_cell(p);');
-  out.push('    for (p = pads)       pad(p);');
-  out.push('    for (p = conn_e)     conn_east(p);');
-  out.push('    for (p = conn_s)     conn_south(p);');
-  out.push('  }');
-  out.push('  for (p = hole_cells) hole_cut(p);');
+  out.push('module part_transparent() {');
+  out.push('  for (p = base_cells) transparent_slab(p);');
   out.push('}');
+  out.push('module part_text() {');
+  out.push('  for (p = text_pix) text_pixel(p);');
+  out.push('}');
+  out.push('module part_heat_resistant() {');
+  out.push('  difference() {');
+  out.push('    union() { for (p = base_cells) hr_slab(p); }');
+  out.push('    for (p = pads)       pad_groove(p);');
+  out.push('    for (p = conn_e)     conn_east_groove(p);');
+  out.push('    for (p = conn_s)     conn_south_groove(p);');
+  out.push('    for (p = hole_cells) hole_cut(p);');
+  out.push('    for (p = text_pix)   text_pixel(p);');
+  out.push('  }');
+  out.push('}');
+  out.push('');
+  out.push('if (part == "all" || part == "p1") part_transparent();');
+  out.push('if (part == "all" || part == "p2") part_text();');
+  out.push('if (part == "all" || part == "p3") part_heat_resistant();');
 
   downloadText(out.join('\n'), 'pcb.scad');
 }
