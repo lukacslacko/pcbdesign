@@ -156,6 +156,9 @@ const COLOR_BOARD = '#1d6b3e';
 const COLOR_TRACE = '#d4a017';
 const COLOR_HOLE  = '#1a1a1a';
 const COLOR_WHITE = '#ffffff'; // text labels, borders, and jumper lines
+// UI-only: render border boxes slightly see-through so a trace running between
+// two adjacent boxed holes shows through. Does not affect the SCAD export.
+const BORDER_UI_ALPHA = 0.55;
 
 // --- text / font constants ---
 // Custom 3x5 pixel font. One glyph centered in each cell (2.54 mm).
@@ -730,10 +733,13 @@ function drawWhiteMarks() {
     if (overrides.removeTexts.has(i)) continue;
     drawTextPixels(texts[i]);
   }
+  ctx.save();
+  ctx.globalAlpha = BORDER_UI_ALPHA;   // see-through boxes (UI only, not exported)
   for (let i = 0; i < borders.length; i++) {
     if (overrides.removeBorders.has(i)) continue;
     for (const r of borderRectsDesign(borders[i])) fillRectDesignMm(r);
   }
+  ctx.restore();
   for (let i = 0; i < lines.length; i++) {
     if (overrides.removeLines.has(i)) continue;
     strokeLineSegment(lines[i], 1);
