@@ -68,6 +68,8 @@
       <button data-tool="hole"  title="Hole line (H)">Hole</button>
       <button data-tool="dip"   title="DIP package (D)">DIP</button>
       <button data-tool="text"  title="Text label (X)">Text</button>
+      <button data-tool="border" title="Border box (O)">Border</button>
+      <button data-tool="line"  title="White line / jumper (L)">Line</button>
     </div>
     <div class="sep dip-only"></div>
     <div class="group dip-only">
@@ -123,12 +125,14 @@
     <span class="swatch"><span class="sq" style="background:#d4a017;position:relative">
       <span style="position:absolute;inset:32% 32%;background:#1a1a1a;border-radius:1px"></span>
     </span> Hole (0.8 mm square, 0.18 mm bottom)</span>
-    <span class="swatch"><span class="sq" style="background:#1d6b3e;color:#1a1a1a;font-size:10px;display:flex;align-items:center;justify-content:center;font-family:ui-monospace,monospace">A</span> Text label (0.4 mm pixels, embedded between board layers)</span>
+    <span class="swatch"><span class="sq" style="background:#1d6b3e;color:#fff;font-size:10px;display:flex;align-items:center;justify-content:center;font-family:ui-monospace,monospace">A</span> Text label (white 0.4 mm pixels, embedded between board layers)</span>
+    <span class="swatch"><span class="sq" style="background:#1d6b3e;position:relative"><span style="position:absolute;inset:2px;border:2px solid #fff;border-radius:1px"></span></span> Border (white 0.4 mm frame)</span>
+    <span class="swatch"><span class="sq" style="background:#1d6b3e;position:relative"><span style="position:absolute;left:2px;right:2px;top:50%;height:2px;transform:translateY(-50%);background:#fff"></span></span> White line / jumper (0.4 mm)</span>
     <span class="swatch" style="margin-left:auto">Cell = 2.54 mm (0.1″)</span>
   </div>
   <div class="hint">
-    <kbd>E</kbd>/<kbd>B</kbd>/<kbd>T</kbd>/<kbd>S</kbd>/<kbd>H</kbd>/<kbd>D</kbd>/<kbd>X</kbd> pick tools.
-    Board / Erase = rectangle drag · Trace / Hole = axis-parallel line · Bus = parallel lines (perpendicular offset follows drag direction) · DIP / Text = click to place · <kbd>R</kbd> rotates DIP and Text. Right-drag always erases. <kbd>⌘/Ctrl+Z</kbd> undo · <kbd>⌘/Ctrl+Shift+Z</kbd> redo.
+    <kbd>E</kbd>/<kbd>B</kbd>/<kbd>T</kbd>/<kbd>S</kbd>/<kbd>H</kbd>/<kbd>D</kbd>/<kbd>X</kbd>/<kbd>O</kbd>/<kbd>L</kbd> pick tools.
+    Board / Erase / Border = rectangle drag · Trace / Hole = axis-parallel line · Line = free center-to-center segment · Bus = parallel lines (perpendicular offset follows drag direction) · DIP / Text = click to place · <kbd>R</kbd> rotates DIP and Text. Right-drag always erases. <kbd>⌘/Ctrl+Z</kbd> undo · <kbd>⌘/Ctrl+Shift+Z</kbd> redo.
   </div>
   <div class="canvas-wrap" id="wrap"><canvas id="grid"></canvas></div>
 
@@ -151,7 +155,7 @@ const COLOR_EMPTY = '#f4f4f4';
 const COLOR_BOARD = '#1d6b3e';
 const COLOR_TRACE = '#d4a017';
 const COLOR_HOLE  = '#1a1a1a';
-const COLOR_TEXT  = '#1a1a1a';
+const COLOR_WHITE = '#ffffff'; // text labels, borders, and jumper lines
 
 // --- text / font constants ---
 // Custom 3x5 pixel font. One glyph centered in each cell (2.54 mm).
@@ -219,6 +223,8 @@ let cols = 40, rows = 40;
 let cells = makeCells(cols, rows);
 let links = new Set(); // edge keys; see linkKey()
 let texts = [];        // [{ x, y, rot, text }]   x/y = origin cell, rot in {0,90,180,270}
+let borders = [];      // [{ x0, y0, x1, y1 }]    normalized cell rectangle (white frame)
+let lines = [];        // [{ x1, y1, x2, y2 }]    free center-to-center white line
 let tool = 'board';
 let cellPx = 28;
 let drag = null;       // { start:{x,y}, end:{x,y}, tool, button }
@@ -343,6 +349,8 @@ window.addEventListener('keydown', e => {
   else if (k === 'h') selectTool('hole');
   else if (k === 'd') selectTool('dip');
   else if (k === 'x') selectTool('text');
+  else if (k === 'o') selectTool('border');
+  else if (k === 'l') selectTool('line');
 });
 
 function rotateText() {
@@ -363,7 +371,9 @@ const TOOL_CURSORS = {
   bus:   cursorUrl(`<rect x='2' y='3' width='20' height='3' fill='#d4a017' stroke='#7a5a0c' stroke-width='0.5'/><rect x='2' y='10' width='20' height='3' fill='#d4a017' stroke='#7a5a0c' stroke-width='0.5'/><rect x='2' y='17' width='20' height='3' fill='#d4a017' stroke='#7a5a0c' stroke-width='0.5'/>`),
   hole:  cursorUrl(`<rect x='4' y='4' width='16' height='16' fill='rgba(29,107,62,0.7)' stroke='#0e3a22' stroke-width='1'/><rect x='8' y='8' width='8' height='8' fill='#d4a017' stroke='#7a5a0c' stroke-width='1'/><rect x='10' y='10' width='4' height='4' fill='#1a1a1a'/>`),
   dip:   cursorUrl(`<rect x='8' y='3' width='8' height='18' rx='1' fill='#333' stroke='#111' stroke-width='1'/><circle cx='10' cy='7' r='1.2' fill='#d4a017'/><circle cx='14' cy='7' r='1.2' fill='#d4a017'/><circle cx='10' cy='12' r='1.2' fill='#d4a017'/><circle cx='14' cy='12' r='1.2' fill='#d4a017'/><circle cx='10' cy='17' r='1.2' fill='#d4a017'/><circle cx='14' cy='17' r='1.2' fill='#d4a017'/>`),
-  text:  cursorUrl(`<rect x='4' y='4' width='16' height='16' fill='rgba(29,107,62,0.7)' stroke='#0e3a22' stroke-width='1'/><text x='12' y='17' font-family='monospace' font-size='14' fill='#1a1a1a' text-anchor='middle' font-weight='bold'>A</text>`),
+  text:  cursorUrl(`<rect x='4' y='4' width='16' height='16' fill='rgba(29,107,62,0.7)' stroke='#0e3a22' stroke-width='1'/><text x='12' y='17' font-family='monospace' font-size='14' fill='#fff' text-anchor='middle' font-weight='bold'>A</text>`),
+  border: cursorUrl(`<rect x='3' y='3' width='18' height='18' fill='rgba(29,107,62,0.7)' stroke='#0e3a22' stroke-width='1'/><rect x='5' y='5' width='14' height='14' fill='none' stroke='#fff' stroke-width='2'/>`),
+  line:  cursorUrl(`<rect x='3' y='3' width='18' height='18' fill='rgba(29,107,62,0.7)' stroke='#0e3a22' stroke-width='1'/><line x1='5' y1='19' x2='19' y2='5' stroke='#fff' stroke-width='2.5'/>`),
 };
 
 // DIP controls
@@ -422,6 +432,8 @@ document.getElementById('newBtn').addEventListener('click', () => {
   cells = makeCells(cols, rows);
   links = new Set();
   texts = [];
+  borders = [];
+  lines = [];
   autosave(); draw();
 });
 document.getElementById('saveBtn').addEventListener('click', save);
@@ -462,6 +474,8 @@ function resizeGrid(c, r) {
   }
   cells = next; cols = c; rows = r; links = keep;
   texts = texts.filter(t => t.x >= 0 && t.x < cols && t.y >= 0 && t.y < rows);
+  borders = borders.filter(b => b.x0 >= 0 && b.y0 >= 0 && b.x1 < cols && b.y1 < rows);
+  lines = lines.filter(l => inBounds(l.x1, l.y1) && inBounds(l.x2, l.y2));
   document.getElementById('cols').value = cols;
   document.getElementById('rows').value = rows;
   setCanvasSize(); autosave(); draw();
@@ -546,7 +560,7 @@ function busSegments(s, e) {
 // --- drawing ---
 
 // Per-frame overrides so previews share the same neighbor-aware renderer.
-let overrides = { cells: new Map(), addLinks: new Set(), removeLinks: new Set(), removeTexts: new Set() };
+let overrides = { cells: new Map(), addLinks: new Set(), removeLinks: new Set(), removeTexts: new Set(), removeBorders: new Set(), removeLines: new Set() };
 function ovKey(x, y) { return y * 10000 + x; }
 
 function paintCellOverride(map, x, y, state) {
@@ -563,6 +577,8 @@ function buildOverrides() {
   const addL = new Set();
   const remL = new Set();
   const remT = new Set();
+  const remB = new Set();
+  const remLn = new Set();
 
   function applyErasePlan(planCells) {
     const ep = erasePlan(planCells);
@@ -570,7 +586,9 @@ function buildOverrides() {
       cMap.set(ovKey(c.x, c.y), c.newState);
       for (const k of linksTouching(c.x, c.y)) remL.add(k);
     }
-    for (const i of ep.textIndices) remT.add(i);
+    for (const i of ep.textIndices)   remT.add(i);
+    for (const i of ep.borderIndices) remB.add(i);
+    for (const i of ep.lineIndices)   remLn.add(i);
   }
 
   function applyPlan(plan, target) {
@@ -602,13 +620,19 @@ function buildOverrides() {
   }
 
   if (drag) {
-    const target = targetStateFor(drag.tool);
-    applyPlan(actionPlan(drag.tool, drag.start, drag.end), target);
+    // Borders and lines don't touch cells or links — their preview is drawn
+    // separately in draw(); skip the cell/link override machinery for them.
+    if (drag.tool !== 'border' && drag.tool !== 'line') {
+      const target = targetStateFor(drag.tool);
+      applyPlan(actionPlan(drag.tool, drag.start, drag.end), target);
+    }
   } else if (hover) {
     if (tool === 'dip') {
       for (const h of dipHoles(hover.x, hover.y)) {
         if (inBounds(h.x, h.y)) cMap.set(ovKey(h.x, h.y), 'hole');
       }
+    } else if (tool === 'border' || tool === 'line') {
+      // no single-cell hover preview for border/line
     } else {
       const target = targetStateFor(tool);
       if (target === 'erase') {
@@ -626,7 +650,7 @@ function buildOverrides() {
     }
   }
 
-  return { cells: cMap, addLinks: addL, removeLinks: remL, removeTexts: remT };
+  return { cells: cMap, addLinks: addL, removeLinks: remL, removeTexts: remT, removeBorders: remB, removeLines: remLn };
 }
 
 function isPadState(s) { return s === 'trace' || s === 'hole'; }
@@ -667,9 +691,14 @@ function draw() {
       drawCellShape(x, y, effectiveState(x, y));
 
   drawGrid();
-  drawTexts();
+  drawWhiteMarks();
+  drawHoleSquares();   // holes punch through white marks, as they will in the print
 
-  if (drag) drawDragOverlay();
+  if (drag) {
+    drawDragOverlay();
+    if (drag.tool === 'border') drawBorderPreview(drag.start, drag.end);
+    else if (drag.tool === 'line') drawLinePreview(drag.start, drag.end);
+  }
   if (!drag && hover) {
     if (tool === 'dip') drawDipOutline(hover.x, hover.y);
     else if (tool === 'text') drawTextPreview(hover.x, hover.y);
@@ -684,19 +713,84 @@ function paintErasePreviewCells(ep) {
   for (const c of ep.cellChanges) {
     ctx.fillRect(c.x * cellPx, c.y * cellPx, cellPx, cellPx);
   }
-  for (const i of ep.textIndices) {
-    for (const tc of textCells(texts[i])) {
-      if (inBounds(tc.x, tc.y)) ctx.fillRect(tc.x * cellPx, tc.y * cellPx, cellPx, cellPx);
+  const highlightCells = list => {
+    for (const c of list) {
+      if (inBounds(c.x, c.y)) ctx.fillRect(c.x * cellPx, c.y * cellPx, cellPx, cellPx);
     }
-  }
+  };
+  for (const i of ep.textIndices)   highlightCells(textCells(texts[i]));
+  for (const i of ep.borderIndices) highlightCells(borderCells(borders[i]));
+  for (const i of ep.lineIndices)   highlightCells(lineCells(lines[i]));
 }
 
-function drawTexts() {
-  ctx.fillStyle = COLOR_TEXT;
+// All white geometry (text glyphs, borders, jumper lines) renders white.
+function drawWhiteMarks() {
+  ctx.fillStyle = COLOR_WHITE;
   for (let i = 0; i < texts.length; i++) {
     if (overrides.removeTexts.has(i)) continue;
     drawTextPixels(texts[i]);
   }
+  for (let i = 0; i < borders.length; i++) {
+    if (overrides.removeBorders.has(i)) continue;
+    for (const r of borderRectsDesign(borders[i])) fillRectDesignMm(r);
+  }
+  for (let i = 0; i < lines.length; i++) {
+    if (overrides.removeLines.has(i)) continue;
+    strokeLineSegment(lines[i], 1);
+  }
+}
+
+// Re-draw the black hole squares on top of the white marks: a drilled hole
+// removes material there, so it must obscure any text / border / line pixels
+// it overlaps (matching what the printed board does).
+function drawHoleSquares() {
+  ctx.fillStyle = COLOR_HOLE;
+  const hSize = cellPx * HOLE_FRAC;
+  const hOff  = (cellPx - hSize) / 2;
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      if (effectiveState(x, y) !== 'hole') continue;
+      ctx.fillRect(x * cellPx + hOff, y * cellPx + hOff, hSize, hSize);
+    }
+  }
+}
+
+// Fill a rectangle given in design mm coords ({x, y, w, h}, y grows down).
+function fillRectDesignMm(r) {
+  const k = cellPx / MM_CELL;
+  ctx.fillRect(r.x * k, r.y * k, r.w * k, r.h * k);
+}
+
+// Stroke a free center-to-center white line, 0.4 mm wide (butt caps to match SCAD).
+function strokeLineSegment(l, alpha) {
+  const ax = (l.x1 + 0.5) * cellPx, ay = (l.y1 + 0.5) * cellPx;
+  const bx = (l.x2 + 0.5) * cellPx, by = (l.y2 + 0.5) * cellPx;
+  ctx.save();
+  if (alpha != null) ctx.globalAlpha = alpha;
+  ctx.strokeStyle = COLOR_WHITE;
+  ctx.lineWidth = Math.max(1, MM_PIXEL * (cellPx / MM_CELL));
+  ctx.lineCap = 'butt';
+  ctx.beginPath();
+  ctx.moveTo(ax, ay); ctx.lineTo(bx, by);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawBorderPreview(s, e) {
+  const b = normRect(s, e);
+  ctx.save();
+  ctx.globalAlpha = 0.6;
+  ctx.fillStyle = COLOR_WHITE;
+  for (const r of borderRectsDesign(b)) fillRectDesignMm(r);
+  ctx.restore();
+  ctx.strokeStyle = '#2a90ff';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(b.x0 * cellPx + 1, b.y0 * cellPx + 1,
+                 (b.x1 - b.x0 + 1) * cellPx - 2, (b.y1 - b.y0 + 1) * cellPx - 2);
+}
+
+function drawLinePreview(s, e) {
+  strokeLineSegment(lineSegment(s, e), 0.75);
 }
 
 function drawTextPixels(textObj) {
@@ -723,7 +817,7 @@ function drawTextPreview(ox, oy) {
   if (trimmed.length === 0) return;
   ctx.save();
   ctx.globalAlpha = 0.55;
-  ctx.fillStyle = COLOR_TEXT;
+  ctx.fillStyle = COLOR_WHITE;
   drawTextPixels({ x: ox, y: oy, rot: textRot, text: trimmed });
   ctx.restore();
 }
@@ -902,6 +996,75 @@ function textCells(textObj) {
   return out;
 }
 
+// --- border / line geometry ---
+function normRect(s, e) {
+  return {
+    x0: Math.min(s.x, e.x), y0: Math.min(s.y, e.y),
+    x1: Math.max(s.x, e.x), y1: Math.max(s.y, e.y),
+  };
+}
+
+// Clamp a normalized rect to the grid; returns null if it falls fully outside.
+function clampRect(b) {
+  const x0 = Math.max(0, Math.min(cols - 1, b.x0));
+  const y0 = Math.max(0, Math.min(rows - 1, b.y0));
+  const x1 = Math.max(0, Math.min(cols - 1, b.x1));
+  const y1 = Math.max(0, Math.min(rows - 1, b.y1));
+  if (x1 < x0 || y1 < y0) return null;
+  return { x0, y0, x1, y1 };
+}
+
+// The four white frame edges of a border, in design mm coords ({x, y, w, h}).
+// Each edge is MM_PIXEL (0.4 mm) thick, hugging the inner edge of the rectangle.
+function borderRectsDesign(b) {
+  const bw = MM_PIXEL;
+  const X0 = b.x0 * MM_CELL, X1 = (b.x1 + 1) * MM_CELL;
+  const Y0 = b.y0 * MM_CELL, Y1 = (b.y1 + 1) * MM_CELL;
+  return [
+    { x: X0,      y: Y0,      w: X1 - X0, h: bw      }, // top
+    { x: X0,      y: Y1 - bw, w: X1 - X0, h: bw      }, // bottom
+    { x: X0,      y: Y0,      w: bw,      h: Y1 - Y0 }, // left
+    { x: X1 - bw, y: Y0,      w: bw,      h: Y1 - Y0 }, // right
+  ];
+}
+
+// The perimeter cells of a border — used for erase hit-testing / preview.
+function borderCells(b) {
+  const out = [];
+  for (let x = b.x0; x <= b.x1; x++) {
+    out.push({ x, y: b.y0 });
+    if (b.y1 !== b.y0) out.push({ x, y: b.y1 });
+  }
+  for (let y = b.y0 + 1; y < b.y1; y++) {
+    out.push({ x: b.x0, y });
+    if (b.x1 !== b.x0) out.push({ x: b.x1, y });
+  }
+  return out;
+}
+
+function lineSegment(s, e) {
+  return { x1: s.x, y1: s.y, x2: e.x, y2: e.y };
+}
+
+function validLine(l) {
+  return inBounds(l.x1, l.y1) && inBounds(l.x2, l.y2) &&
+         !(l.x1 === l.x2 && l.y1 === l.y2);
+}
+
+// Cells a free line passes through, sampled along its length — used for erase.
+function lineCells(l) {
+  const out = [], seen = new Set();
+  const steps = Math.max(1, Math.ceil(Math.hypot(l.x2 - l.x1, l.y2 - l.y1) * 4));
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const x = Math.round(l.x1 + (l.x2 - l.x1) * t);
+    const y = Math.round(l.y1 + (l.y2 - l.y1) * t);
+    const key = x + ',' + y;
+    if (!seen.has(key)) { seen.add(key); out.push({ x, y }); }
+  }
+  return out;
+}
+
 // --- input ---
 function cellAt(e) {
   const rect = canvas.getBoundingClientRect();
@@ -954,6 +1117,18 @@ window.addEventListener('mousemove', e => {
 window.addEventListener('mouseup', e => {
   if (!drag) return;
   const targetTool = drag.tool;
+  if (targetTool === 'border') {
+    const b = clampRect(normRect(drag.start, drag.end));
+    if (b) { pushHistory(); borders.push(b); autosave(); }
+    drag = null; draw();
+    return;
+  }
+  if (targetTool === 'line') {
+    const l = lineSegment(drag.start, drag.end);
+    if (validLine(l)) { pushHistory(); lines.push(l); autosave(); }
+    drag = null; draw();
+    return;
+  }
   const target = targetStateFor(targetTool);
   const plan = actionPlan(targetTool, drag.start, drag.end);
   pushHistory();
@@ -989,11 +1164,24 @@ function erasePlan(planCells) {
       if (planSet.has(tc.x + ',' + tc.y)) { textIndices.push(i); break; }
     }
   }
+  const borderIndices = [];
+  for (let i = 0; i < borders.length; i++) {
+    for (const bc of borderCells(borders[i])) {
+      if (planSet.has(bc.x + ',' + bc.y)) { borderIndices.push(i); break; }
+    }
+  }
+  const lineIndices = [];
+  for (let i = 0; i < lines.length; i++) {
+    for (const lc of lineCells(lines[i])) {
+      if (planSet.has(lc.x + ',' + lc.y)) { lineIndices.push(i); break; }
+    }
+  }
   let hasPad = false;
   for (const c of planCells) {
     if (inBounds(c.x, c.y) && isPadState(cells[c.y][c.x])) { hasPad = true; break; }
   }
-  const trigger = hasPad || textIndices.length > 0;
+  const trigger = hasPad || textIndices.length > 0 ||
+                  borderIndices.length > 0 || lineIndices.length > 0;
   const cellChanges = [];
   for (const c of planCells) {
     if (!inBounds(c.x, c.y)) continue;
@@ -1004,7 +1192,7 @@ function erasePlan(planCells) {
       cellChanges.push({ x: c.x, y: c.y, newState: 'empty' });
     }
   }
-  return { cellChanges, textIndices };
+  return { cellChanges, textIndices, borderIndices, lineIndices };
 }
 
 function applyPlanToState(plan, target) {
@@ -1014,9 +1202,15 @@ function applyPlanToState(plan, target) {
       cells[c.y][c.x] = c.newState;
       for (const k of linksTouching(c.x, c.y)) links.delete(k);
     }
-    // Splice texts in reverse so the indices stay valid as we remove.
+    // Splice in reverse so the indices stay valid as we remove.
     for (let i = ep.textIndices.length - 1; i >= 0; i--) {
       texts.splice(ep.textIndices[i], 1);
+    }
+    for (let i = ep.borderIndices.length - 1; i >= 0; i--) {
+      borders.splice(ep.borderIndices[i], 1);
+    }
+    for (let i = ep.lineIndices.length - 1; i >= 0; i--) {
+      lines.splice(ep.lineIndices[i], 1);
     }
     return;
   }
@@ -1085,6 +1279,8 @@ function snapshot() {
     cells: cells.map(row => row.slice()),
     links: [...links],
     texts: texts.map(t => ({...t})),
+    borders: borders.map(b => ({...b})),
+    lines: lines.map(l => ({...l})),
   };
 }
 
@@ -1093,6 +1289,8 @@ function restoreSnapshot(s) {
   cells = s.cells.map(row => row.slice());
   links = new Set(s.links);
   texts = Array.isArray(s.texts) ? s.texts.map(t => ({...t})) : [];
+  borders = Array.isArray(s.borders) ? s.borders.map(b => ({...b})) : [];
+  lines = Array.isArray(s.lines) ? s.lines.map(l => ({...l})) : [];
   document.getElementById('cols').value = cols;
   document.getElementById('rows').value = rows;
   setCanvasSize();
@@ -1133,7 +1331,7 @@ document.getElementById('redoBtn').addEventListener('click', redo);
 
 // --- persistence ---
 function serialize() {
-  return { version: 3, cols, rows, cellMm: MM_CELL, cells, links: [...links], texts };
+  return { version: 4, cols, rows, cellMm: MM_CELL, cells, links: [...links], texts, borders, lines };
 }
 function deserialize(data) {
   if (!data || !Array.isArray(data.cells)) throw new Error('Invalid file');
@@ -1155,6 +1353,12 @@ function deserialize(data) {
   }
   texts = Array.isArray(data.texts)
     ? data.texts.filter(t => inBounds(t.x, t.y)).map(t => ({...t}))
+    : [];
+  borders = Array.isArray(data.borders)
+    ? data.borders.filter(b => inBounds(b.x0, b.y0) && inBounds(b.x1, b.y1)).map(b => ({...b}))
+    : [];
+  lines = Array.isArray(data.lines)
+    ? data.lines.filter(l => inBounds(l.x1, l.y1) && inBounds(l.x2, l.y2)).map(l => ({...l}))
     : [];
   document.getElementById('cols').value = cols;
   document.getElementById('rows').value = rows;
@@ -1200,12 +1404,12 @@ function restoreAutosave() {
 
 // --- OpenSCAD export ---
 //
-// Layered, 3-part output. The print is built with the transparent layer first
-// (Z=0..0.1), then the text glyphs (Z=0.1..0.4, black), then the heat-resistant
-// slab above that (Z=0.1..0.9, with trace grooves engraved into its bottom 0.3
-// mm and text-shaped voids filled by part 2). The build plate side ends up as
-// the viewing/IC side of the finished board; traces and labels live on the
-// underside and are visible through the transparent layer.
+// Layered, 3-part output. The print is built with the transparent layer first,
+// then the white marks (text glyphs, borders, jumper lines), then the
+// heat-resistant slab above that, with trace grooves engraved into its bottom
+// face and white-mark-shaped voids filled by part 2. The build plate side ends
+// up as the viewing/IC side of the finished board; traces and white marks live
+// on the underside and are visible through the transparent layer.
 function exportScad() {
   const f = n => Number(n.toFixed(4)).toString();
   const out = [];
@@ -1246,15 +1450,29 @@ function exportScad() {
     }
   }
 
-  // Text pixels — each is the lower-left corner (SCAD mm) of one ink pixel.
-  const textPix = [];
+  // White marks — text glyph pixels, border frames, and jumper lines. They all
+  // live in the same white layer (part 2) and are subtracted from the base
+  // (part 3). Axis-aligned bits (text, borders) are emitted as boxes [x,y,w,h];
+  // free lines are emitted as segments [x1,y1,x2,y2] (rotated rect in SCAD).
   const yMaxMm = rows * MM_CELL;
+  const whiteBoxes = [];
+  const whiteLines = [];
+  const pushBox = r => {
+    // r is {x,y,w,h} in design mm (y grows down); flip into SCAD (+Y up).
+    whiteBoxes.push([r.x, yMaxMm - (r.y + r.h), r.w, r.h]);
+  };
   for (const t of texts) {
     for (const p of textPixels(t)) {
-      const sx = p.cxMm - MM_PIXEL / 2;
-      const sy = yMaxMm - p.cyMm - MM_PIXEL / 2;
-      textPix.push([sx, sy]);
+      pushBox({ x: p.cxMm - MM_PIXEL / 2, y: p.cyMm - MM_PIXEL / 2, w: MM_PIXEL, h: MM_PIXEL });
     }
+  }
+  for (const b of borders) {
+    for (const r of borderRectsDesign(b)) pushBox(r);
+  }
+  for (const l of lines) {
+    const ax = (l.x1 + 0.5) * MM_CELL, ay = yMaxMm - (l.y1 + 0.5) * MM_CELL;
+    const bx = (l.x2 + 0.5) * MM_CELL, by = yMaxMm - (l.y2 + 0.5) * MM_CELL;
+    whiteLines.push([ax, ay, bx, by]);
   }
 
   // Z-axis is the finished-board orientation: the user looks at the board
@@ -1282,10 +1500,10 @@ function exportScad() {
   out.push(`// board size: ${f(cols*MM_CELL)} x ${f(rows*MM_CELL)} x ${f(tranZ1)} mm`);
   out.push('//');
   out.push('// Z-axis matches the finished board: +Z is the side you look at.');
-  out.push(`//   ${f(tranZ0)} – ${f(tranZ1)}  transparent slab (part 1, no holes, no text)`);
-  out.push(`//   ${f(textZ0)} – ${f(textZ1)}  text glyphs (part 2, black) — engraved into the top`);
-  out.push('//                            of the board base so labels read correctly through the');
-  out.push('//                            transparent slab without mirroring.');
+  out.push(`//   ${f(tranZ0)} – ${f(tranZ1)}  transparent slab (part 1, no holes, no marks)`);
+  out.push(`//   ${f(textZ0)} – ${f(textZ1)}  white marks (part 2): text, borders, jumper lines —`);
+  out.push('//                            engraved into the top of the board base so they read');
+  out.push('//                            correctly through the transparent slab without mirroring.');
   out.push(`//   ${f(baseZ0)} – ${f(baseZ1)}  heat-resistant board base (part 3)`);
   out.push(`//   ${f(traceZ0)} – ${f(traceZ1)}  heat-resistant raised traces (part 3) — copper-tape`);
   out.push('//                            guides on the bottom face.');
@@ -1295,7 +1513,7 @@ function exportScad() {
   out.push('//');
   out.push('// Set `part` below to export each piece individually for slicing.');
   out.push('');
-  out.push('part = "all";   // "all" | "p1" (transparent) | "p2" (text) | "p3" (heat-resistant)');
+  out.push('part = "all";   // "all" | "p1" (transparent) | "p2" (white marks) | "p3" (heat-resistant)');
   out.push('');
   out.push(`cell           = ${MM_CELL};`);
   out.push(`transparent_h  = ${transparentH};`);
@@ -1311,11 +1529,11 @@ function exportScad() {
   out.push(`hole_z1        = ${f(holeZ1)};`);
   out.push(`trace_w        = ${MM_TRACE_W};`);
   out.push(`hole_w         = ${MM_HOLE};`);
-  out.push(`pixel_mm       = ${MM_PIXEL};`);
+  out.push(`line_w         = ${MM_PIXEL};`);
   out.push('eps            = 0.01;');
   out.push('');
 
-  if (baseCells.length === 0 && textPix.length === 0) {
+  if (baseCells.length === 0 && whiteBoxes.length === 0 && whiteLines.length === 0) {
     out.push('// (empty design)');
     downloadText(out.join('\n'), 'pcb.scad');
     return;
@@ -1353,25 +1571,40 @@ function exportScad() {
   out.push('             hole_z0 - eps])');
   out.push('    cube([hole_w, hole_w, hole_z1 - hole_z0 + 2*eps]);');
   out.push('}');
-  out.push('module text_pixel(p) {');
-  out.push('  translate([p[0], p[1], text_z0])');
-  out.push('    cube([pixel_mm, pixel_mm, text_z1 - text_z0]);');
+  out.push('module white_box(b) {  // [x, y, w, h] — text pixel or border edge');
+  out.push('  translate([b[0], b[1], text_z0])');
+  out.push('    cube([b[2], b[3], text_z1 - text_z0]);');
+  out.push('}');
+  out.push('module white_line(s) {  // [x1, y1, x2, y2] — jumper / resistor line');
+  out.push('  d = [s[2] - s[0], s[3] - s[1]];');
+  out.push('  translate([s[0], s[1], text_z0])');
+  out.push('    rotate([0, 0, atan2(d[1], d[0])])');
+  out.push('      translate([0, -line_w/2, 0])');
+  out.push('        cube([norm(d), line_w, text_z1 - text_z0]);');
   out.push('}');
   out.push('');
 
-  const arr = list => '[' + list.map(p => `[${typeof p[0] === 'number' ? f(p[0]) : p[0]},${typeof p[1] === 'number' ? f(p[1]) : p[1]}]`).join(',') + ']';
-  out.push('base_cells = ' + arr(baseCells) + ';');
-  out.push('pads       = ' + arr(pads)      + ';');
-  out.push('conn_e     = ' + arr(connE)     + ';');
-  out.push('conn_s     = ' + arr(connS)     + ';');
-  out.push('hole_cells = ' + arr(holeCells) + ';');
-  out.push('text_pix   = ' + arr(textPix)   + ';');
+  const fmtNum = v => typeof v === 'number' ? f(v) : v;
+  const arr = list => '[' + list.map(p => '[' + p.map(fmtNum).join(',') + ']').join(',') + ']';
+  out.push('base_cells  = ' + arr(baseCells)  + ';');
+  out.push('pads        = ' + arr(pads)       + ';');
+  out.push('conn_e      = ' + arr(connE)      + ';');
+  out.push('conn_s      = ' + arr(connS)      + ';');
+  out.push('hole_cells  = ' + arr(holeCells)  + ';');
+  out.push('white_boxes = ' + arr(whiteBoxes) + ';');
+  out.push('white_lines = ' + arr(whiteLines) + ';');
   out.push('');
   out.push('module part_transparent() {');
   out.push('  for (p = base_cells) transparent_slab(p);');
   out.push('}');
-  out.push('module part_text() {');
-  out.push('  for (p = text_pix) text_pixel(p);');
+  out.push('module part_white() {');
+  out.push('  difference() {');
+  out.push('    union() {');
+  out.push('      for (b = white_boxes) white_box(b);');
+  out.push('      for (s = white_lines) white_line(s);');
+  out.push('    }');
+  out.push('    for (p = hole_cells) hole_cut(p);  // holes drill through white marks too');
+  out.push('  }');
   out.push('}');
   out.push('module part_heat_resistant() {');
   out.push('  difference() {');
@@ -1381,13 +1614,14 @@ function exportScad() {
   out.push('      for (p = conn_e)     conn_east(p);');
   out.push('      for (p = conn_s)     conn_south(p);');
   out.push('    }');
-  out.push('    for (p = hole_cells) hole_cut(p);');
-  out.push('    for (p = text_pix)   text_pixel(p);');
+  out.push('    for (p = hole_cells)  hole_cut(p);');
+  out.push('    for (b = white_boxes) white_box(b);');
+  out.push('    for (s = white_lines) white_line(s);');
   out.push('  }');
   out.push('}');
   out.push('');
   out.push('if (part == "all" || part == "p1") part_transparent();');
-  out.push('if (part == "all" || part == "p2") part_text();');
+  out.push('if (part == "all" || part == "p2") part_white();');
   out.push('if (part == "all" || part == "p3") part_heat_resistant();');
 
   downloadText(out.join('\n'), 'pcb.scad');
