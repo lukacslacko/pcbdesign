@@ -70,6 +70,7 @@
       <button data-tool="text"  title="Text label (X)">Text</button>
       <button data-tool="border" title="Border box (O)">Border</button>
       <button data-tool="line"  title="White line / jumper (L)">Line</button>
+      <button data-tool="select" title="Select rectangle (M)">Select</button>
     </div>
     <div class="sep dip-only"></div>
     <div class="group dip-only">
@@ -110,6 +111,12 @@
     </div>
     <div class="sep"></div>
     <div class="group">
+      <button id="cutBtn"   title="Cut selection (⌘/Ctrl+X)" disabled>Cut</button>
+      <button id="copyBtn"  title="Copy selection (⌘/Ctrl+C)" disabled>Copy</button>
+      <button id="pasteBtn" title="Paste — click to place (⌘/Ctrl+V)" disabled>Paste</button>
+    </div>
+    <div class="sep"></div>
+    <div class="group">
       <button id="newBtn">New</button>
       <button id="saveBtn">Save</button>
       <button id="loadBtn">Load</button>
@@ -131,8 +138,9 @@
     <span class="swatch" style="margin-left:auto">Cell = 2.54 mm (0.1″)</span>
   </div>
   <div class="hint">
-    <kbd>E</kbd>/<kbd>B</kbd>/<kbd>T</kbd>/<kbd>S</kbd>/<kbd>H</kbd>/<kbd>D</kbd>/<kbd>X</kbd>/<kbd>O</kbd>/<kbd>L</kbd> pick tools.
-    Board / Erase / Border = rectangle drag · Trace / Hole = axis-parallel line · Line = free center-to-center segment · Bus = parallel lines (perpendicular offset follows drag direction) · DIP / Text = click to place · <kbd>R</kbd> rotates DIP and Text. Right-drag always erases. <kbd>⌘/Ctrl+Z</kbd> undo · <kbd>⌘/Ctrl+Shift+Z</kbd> redo.
+    <kbd>E</kbd>/<kbd>B</kbd>/<kbd>T</kbd>/<kbd>S</kbd>/<kbd>H</kbd>/<kbd>D</kbd>/<kbd>X</kbd>/<kbd>O</kbd>/<kbd>L</kbd>/<kbd>M</kbd> pick tools.
+    Board / Erase / Border / Select = rectangle drag · Trace / Hole = axis-parallel line · Line = free center-to-center segment · Bus = parallel lines (perpendicular offset follows drag direction) · DIP / Text = click to place · <kbd>R</kbd> rotates DIP and Text. Right-drag always erases. <kbd>⌘/Ctrl+Z</kbd> undo · <kbd>⌘/Ctrl+Shift+Z</kbd> redo.
+    Select a rectangle, then <kbd>⌘/Ctrl+C</kbd> copy · <kbd>⌘/Ctrl+X</kbd> cut · <kbd>⌘/Ctrl+V</kbd> paste (click to stamp, repeat freely, <kbd>Esc</kbd> cancels).
   </div>
   <div class="canvas-wrap" id="wrap"><canvas id="grid"></canvas></div>
 
@@ -233,6 +241,12 @@ let cellPx = 28;
 let drag = null;       // { start:{x,y}, end:{x,y}, tool, button }
 let hover = null;      // {x,y}
 
+// Selection + clipboard (cut / copy / paste). The clipboard is in-app only
+// (a JS object), not the system clipboard, and lives for the session.
+let selection = null;  // { x0, y0, x1, y1 }  current marquee, or null
+let clipboard = null;  // captured fragment {w,h,cells,links,texts,borders,lines}, relative coords
+let pasting = false;   // true while placing a paste (ghost follows the cursor)
+
 // Undo/redo stacks hold snapshots of (cols, rows, cells, links).
 let undoStack = [];
 let redoStack = [];
@@ -292,6 +306,7 @@ for (const btn of document.querySelectorAll('[data-tool]')) {
   btn.addEventListener('click', () => selectTool(btn.dataset.tool));
 }
 function selectTool(t) {
+  pasting = false;   // leaving the active tool cancels an in-progress paste
   tool = t;
   for (const btn of document.querySelectorAll('[data-tool]')) {
     btn.classList.toggle('active', btn.dataset.tool === t);
@@ -331,6 +346,16 @@ window.addEventListener('keydown', e => {
 
   if (e.target.tagName === 'INPUT') return;
 
+  // Clipboard. Guarded above so a focused text field keeps the native copy/paste.
+  if ((e.metaKey || e.ctrlKey) && k === 'c') { e.preventDefault(); doCopy();    return; }
+  if ((e.metaKey || e.ctrlKey) && k === 'x') { e.preventDefault(); doCut();     return; }
+  if ((e.metaKey || e.ctrlKey) && k === 'v') { e.preventDefault(); startPaste(); return; }
+
+  if (e.key === 'Escape') {
+    if (pasting)        { cancelPaste(); return; }
+    if (selection)      { selection = null; updateClipboardButtons(); draw(); return; }
+  }
+
   if (tool === 'dip') {
     if (e.key === '4') { setDipPins(8);  e.preventDefault(); return; }
     if (e.key === '8') { setDipPins(16); e.preventDefault(); return; }
@@ -354,6 +379,7 @@ window.addEventListener('keydown', e => {
   else if (k === 'x') selectTool('text');
   else if (k === 'o') selectTool('border');
   else if (k === 'l') selectTool('line');
+  else if (k === 'm') selectTool('select');
 });
 
 function rotateText() {
@@ -377,6 +403,7 @@ const TOOL_CURSORS = {
   text:  cursorUrl(`<rect x='4' y='4' width='16' height='16' fill='rgba(29,107,62,0.7)' stroke='#0e3a22' stroke-width='1'/><text x='12' y='17' font-family='monospace' font-size='14' fill='#fff' text-anchor='middle' font-weight='bold'>A</text>`),
   border: cursorUrl(`<rect x='3' y='3' width='18' height='18' fill='rgba(29,107,62,0.7)' stroke='#0e3a22' stroke-width='1'/><rect x='5' y='5' width='14' height='14' fill='none' stroke='#fff' stroke-width='2'/>`),
   line:  cursorUrl(`<rect x='3' y='3' width='18' height='18' fill='rgba(29,107,62,0.7)' stroke='#0e3a22' stroke-width='1'/><line x1='5' y1='19' x2='19' y2='5' stroke='#fff' stroke-width='2.5'/>`),
+  select: cursorUrl(`<rect x='3' y='3' width='18' height='18' fill='none' stroke='#39d0ff' stroke-width='2' stroke-dasharray='3 2'/>`),
 };
 
 // DIP controls
@@ -437,6 +464,7 @@ document.getElementById('newBtn').addEventListener('click', () => {
   texts = [];
   borders = [];
   lines = [];
+  selection = null; updateClipboardButtons();
   autosave(); draw();
 });
 document.getElementById('saveBtn').addEventListener('click', save);
@@ -479,6 +507,7 @@ function resizeGrid(c, r) {
   texts = texts.filter(t => t.x >= 0 && t.x < cols && t.y >= 0 && t.y < rows);
   borders = borders.filter(b => b.x0 >= 0 && b.y0 >= 0 && b.x1 < cols && b.y1 < rows);
   lines = lines.filter(l => inBounds(l.x1, l.y1) && inBounds(l.x2, l.y2));
+  selection = null; updateClipboardButtons();
   document.getElementById('cols').value = cols;
   document.getElementById('rows').value = rows;
   setCanvasSize(); autosave(); draw();
@@ -623,19 +652,19 @@ function buildOverrides() {
   }
 
   if (drag) {
-    // Borders and lines don't touch cells or links — their preview is drawn
-    // separately in draw(); skip the cell/link override machinery for them.
-    if (drag.tool !== 'border' && drag.tool !== 'line') {
+    // Borders, lines and the selection marquee don't touch cells or links —
+    // their preview is drawn separately in draw(); skip the override machinery.
+    if (drag.tool !== 'border' && drag.tool !== 'line' && drag.tool !== 'select') {
       const target = targetStateFor(drag.tool);
       applyPlan(actionPlan(drag.tool, drag.start, drag.end), target);
     }
-  } else if (hover) {
+  } else if (hover && !pasting) {
     if (tool === 'dip') {
       for (const h of dipHoles(hover.x, hover.y)) {
         if (inBounds(h.x, h.y)) cMap.set(ovKey(h.x, h.y), 'hole');
       }
-    } else if (tool === 'border' || tool === 'line') {
-      // no single-cell hover preview for border/line
+    } else if (tool === 'border' || tool === 'line' || tool === 'select') {
+      // no single-cell hover preview for border / line / select
     } else {
       const target = targetStateFor(tool);
       if (target === 'erase') {
@@ -701,8 +730,9 @@ function draw() {
     drawDragOverlay();
     if (drag.tool === 'border') drawBorderPreview(drag.start, drag.end);
     else if (drag.tool === 'line') drawLinePreview(drag.start, drag.end);
+    else if (drag.tool === 'select') drawSelectionPreview(drag.start, drag.end);
   }
-  if (!drag && hover) {
+  if (!drag && !pasting && hover) {
     if (tool === 'dip') drawDipOutline(hover.x, hover.y);
     else if (tool === 'text') drawTextPreview(hover.x, hover.y);
     else if (tool === 'erase' && inBounds(hover.x, hover.y)) {
@@ -710,6 +740,11 @@ function draw() {
       paintErasePreviewCells(erasePlan([hover]));
     }
   }
+
+  // Persistent selection marquee (hidden while actively dragging a new one).
+  if (selection && !(drag && drag.tool === 'select')) drawSelectionMarquee(selection);
+  // Paste ghost follows the cursor.
+  if (pasting && hover) drawPasteGhost(hover.x, hover.y);
 }
 
 function paintErasePreviewCells(ep) {
@@ -1085,6 +1120,11 @@ canvas.addEventListener('mousedown', e => {
   if (e.button !== 0 && e.button !== 2) return;
   e.preventDefault();
   const p = cellAt(e);
+  if (pasting) {
+    if (e.button === 0) commitPaste(p.x, p.y);  // stamp; stays armed for more
+    else cancelPaste();                          // right-click cancels
+    return;
+  }
   if (tool === 'dip' && e.button === 0) {
     placeDip(p.x, p.y);
     return;
@@ -1123,6 +1163,13 @@ window.addEventListener('mousemove', e => {
 window.addEventListener('mouseup', e => {
   if (!drag) return;
   const targetTool = drag.tool;
+  if (targetTool === 'select') {
+    selection = clampRect(normRect(drag.start, drag.end));  // null if fully off-grid
+    drag = null;
+    updateClipboardButtons();
+    draw();
+    return;
+  }
   if (targetTool === 'border') {
     const b = clampRect(normRect(drag.start, drag.end));
     if (b) { pushHistory(); borders.push(b); autosave(); }
@@ -1335,6 +1382,215 @@ function updateHistoryButtons() {
 document.getElementById('undoBtn').addEventListener('click', undo);
 document.getElementById('redoBtn').addEventListener('click', redo);
 
+// --- selection / clipboard (cut · copy · paste) ---
+//
+// Selection is a rectangular marquee (the "select" tool). Copy/cut capture the
+// cells inside it, the links wholly inside it, and any text / border / line that
+// is fully contained, all in coordinates relative to the rectangle's top-left.
+// Paste re-stamps that fragment with its top-left anchored at the click cell.
+// The clipboard is in-app state only — it never touches the system clipboard and
+// has no effect on the SCAD export.
+
+const LINK_RE = /^([hv]):(\d+),(\d+)$/;
+
+function captureSelection(sel) {
+  const { x0, y0, x1, y1 } = sel;
+  const w = x1 - x0 + 1, h = y1 - y0 + 1;
+  const inRect = (cx, cy) => cx >= x0 && cx <= x1 && cy >= y0 && cy <= y1;
+
+  const cCells = [];
+  for (let dy = 0; dy < h; dy++) {
+    const row = [];
+    for (let dx = 0; dx < w; dx++) row.push(cells[y0 + dy][x0 + dx]);
+    cCells.push(row);
+  }
+  // Links whose both endpoints lie inside the rectangle.
+  const cLinks = [];
+  for (const k of links) {
+    const m = LINK_RE.exec(k);
+    if (!m) continue;
+    const x = +m[2], y = +m[3];
+    if (m[1] === 'h') {
+      if (x >= x0 && x + 1 <= x1 && y >= y0 && y <= y1) cLinks.push('h:' + (x - x0) + ',' + (y - y0));
+    } else {
+      if (x >= x0 && x <= x1 && y >= y0 && y + 1 <= y1) cLinks.push('v:' + (x - x0) + ',' + (y - y0));
+    }
+  }
+  const cTexts = texts
+    .filter(t => textCells(t).every(c => inRect(c.x, c.y)))
+    .map(t => ({ x: t.x - x0, y: t.y - y0, rot: t.rot, text: t.text }));
+  const cBorders = borders
+    .filter(b => b.x0 >= x0 && b.y0 >= y0 && b.x1 <= x1 && b.y1 <= y1)
+    .map(b => ({ x0: b.x0 - x0, y0: b.y0 - y0, x1: b.x1 - x0, y1: b.y1 - y0 }));
+  const cLines = lines
+    .filter(l => inRect(l.x1, l.y1) && inRect(l.x2, l.y2))
+    .map(l => ({ x1: l.x1 - x0, y1: l.y1 - y0, x2: l.x2 - x0, y2: l.y2 - y0 }));
+
+  return { w, h, cells: cCells, links: cLinks, texts: cTexts, borders: cBorders, lines: cLines };
+}
+
+function doCopy() {
+  if (!selection) return;
+  clipboard = captureSelection(selection);
+  updateClipboardButtons();
+  flashInfo(`Copied ${clipboard.w} × ${clipboard.h} cells`);
+}
+
+function doCut() {
+  if (!selection) return;
+  clipboard = captureSelection(selection);
+  const { x0, y0, x1, y1 } = selection;
+  const inRect = (cx, cy) => cx >= x0 && cx <= x1 && cy >= y0 && cy <= y1;
+  pushHistory();
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) {
+      cells[y][x] = 'empty';
+      for (const k of linksTouching(x, y)) links.delete(k);
+    }
+  }
+  // Drop exactly the marks that were captured (those fully inside the rectangle).
+  texts   = texts.filter(t => !textCells(t).every(c => inRect(c.x, c.y)));
+  borders = borders.filter(b => !(b.x0 >= x0 && b.y0 >= y0 && b.x1 <= x1 && b.y1 <= y1));
+  lines   = lines.filter(l => !(inRect(l.x1, l.y1) && inRect(l.x2, l.y2)));
+  updateClipboardButtons();
+  autosave();
+  draw();
+  flashInfo(`Cut ${clipboard.w} × ${clipboard.h} cells`);
+}
+
+function startPaste() {
+  if (!clipboard) return;
+  pasting = true;
+  canvas.style.cursor = 'copy';
+  flashInfo('Paste: click to place · Esc to cancel');
+  draw();
+}
+
+function cancelPaste() {
+  if (!pasting) return;
+  pasting = false;
+  canvas.style.cursor = TOOL_CURSORS[tool] || 'crosshair';
+  draw();
+}
+
+// Stamp the clipboard with its top-left at (offX, offY). Non-empty cells
+// overwrite the target (empty clipboard cells leave the target untouched);
+// links into overwritten cells are cleared first so the fragment keeps exactly
+// its own internal connectivity.
+function commitPaste(offX, offY) {
+  if (!clipboard) return;
+  const clip = clipboard;
+  pushHistory();
+  for (let cy = 0; cy < clip.h; cy++) {
+    for (let cx = 0; cx < clip.w; cx++) {
+      const st = clip.cells[cy][cx];
+      if (st === 'empty') continue;
+      const X = offX + cx, Y = offY + cy;
+      if (!inBounds(X, Y)) continue;
+      cells[Y][X] = st;
+      for (const k of linksTouching(X, Y)) links.delete(k);
+    }
+  }
+  for (const k of clip.links) {
+    const m = LINK_RE.exec(k);
+    if (!m) continue;
+    const ax = +m[2] + offX, ay = +m[3] + offY;
+    const bx = m[1] === 'h' ? ax + 1 : ax;
+    const by = m[1] === 'h' ? ay : ay + 1;
+    if (!inBounds(ax, ay) || !inBounds(bx, by)) continue;
+    if (!isPadState(cells[ay][ax]) || !isPadState(cells[by][bx])) continue;
+    links.add(linkKey(ax, ay, bx, by));
+  }
+  for (const t of clip.texts) {
+    const nx = t.x + offX, ny = t.y + offY;
+    if (inBounds(nx, ny)) texts.push({ x: nx, y: ny, rot: t.rot, text: t.text });
+  }
+  for (const b of clip.borders) {
+    const nb = { x0: b.x0 + offX, y0: b.y0 + offY, x1: b.x1 + offX, y1: b.y1 + offY };
+    if (inBounds(nb.x0, nb.y0) && inBounds(nb.x1, nb.y1)) borders.push(nb);
+  }
+  for (const l of clip.lines) {
+    const nl = { x1: l.x1 + offX, y1: l.y1 + offY, x2: l.x2 + offX, y2: l.y2 + offY };
+    if (inBounds(nl.x1, nl.y1) && inBounds(nl.x2, nl.y2)) lines.push(nl);
+  }
+  autosave();
+  draw();
+}
+
+function updateClipboardButtons() {
+  document.getElementById('cutBtn').disabled = !selection;
+  document.getElementById('copyBtn').disabled = !selection;
+  document.getElementById('pasteBtn').disabled = !clipboard;
+}
+
+function flashInfo(msg) { info.textContent = msg; }  // overwritten on next mousemove
+
+// Dashed cyan rectangle covering grid cells x0..x1, y0..y1 (inclusive).
+function dashedCellRect(x0, y0, x1, y1) {
+  ctx.strokeStyle = '#39d0ff';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([5, 3]);
+  ctx.strokeRect(x0 * cellPx + 1, y0 * cellPx + 1,
+                 (x1 - x0 + 1) * cellPx - 2, (y1 - y0 + 1) * cellPx - 2);
+  ctx.setLineDash([]);
+}
+
+function drawSelectionPreview(s, e) {
+  const b = clampRect(normRect(s, e));
+  if (!b) return;
+  ctx.fillStyle = 'rgba(57, 208, 255, 0.12)';
+  ctx.fillRect(b.x0 * cellPx, b.y0 * cellPx, (b.x1 - b.x0 + 1) * cellPx, (b.y1 - b.y0 + 1) * cellPx);
+  dashedCellRect(b.x0, b.y0, b.x1, b.y1);
+}
+
+function drawSelectionMarquee(sel) {
+  dashedCellRect(sel.x0, sel.y0, sel.x1, sel.y1);
+}
+
+// Translucent preview of the clipboard anchored top-left at (offX, offY).
+function drawPasteGhost(offX, offY) {
+  const clip = clipboard;
+  const lset = new Set(clip.links);
+  ctx.save();
+  ctx.globalAlpha = 0.55;
+  for (let cy = 0; cy < clip.h; cy++) {
+    for (let cx = 0; cx < clip.w; cx++) {
+      const st = clip.cells[cy][cx];
+      if (st === 'empty') continue;
+      const px = (offX + cx) * cellPx, py = (offY + cy) * cellPx;
+      ctx.fillStyle = COLOR_BOARD;
+      ctx.fillRect(px, py, cellPx, cellPx);
+      if (st === 'trace' || st === 'hole') {
+        const padSize = cellPx * TRACE_FRAC, armLen = (cellPx - padSize) / 2, padOff = armLen;
+        ctx.fillStyle = COLOR_TRACE;
+        ctx.fillRect(px + padOff, py + padOff, padSize, padSize);
+        if (lset.has('v:' + cx + ',' + (cy - 1))) ctx.fillRect(px + padOff, py, padSize, armLen);
+        if (lset.has('v:' + cx + ',' + cy))       ctx.fillRect(px + padOff, py + padOff + padSize, padSize, armLen);
+        if (lset.has('h:' + (cx - 1) + ',' + cy)) ctx.fillRect(px, py + padOff, armLen, padSize);
+        if (lset.has('h:' + cx + ',' + cy))       ctx.fillRect(px + padOff + padSize, py + padOff, armLen, padSize);
+        if (st === 'hole') {
+          const hSize = cellPx * HOLE_FRAC, hOff = (cellPx - hSize) / 2;
+          ctx.fillStyle = COLOR_HOLE;
+          ctx.fillRect(px + hOff, py + hOff, hSize, hSize);
+        }
+      }
+    }
+  }
+  ctx.fillStyle = COLOR_WHITE;
+  for (const t of clip.texts) drawTextPixels({ x: t.x + offX, y: t.y + offY, rot: t.rot, text: t.text });
+  for (const b of clip.borders)
+    for (const r of borderRectsDesign({ x0: b.x0 + offX, y0: b.y0 + offY, x1: b.x1 + offX, y1: b.y1 + offY }))
+      fillRectDesignMm(r);
+  for (const l of clip.lines)
+    strokeLineSegment({ x1: l.x1 + offX, y1: l.y1 + offY, x2: l.x2 + offX, y2: l.y2 + offY }, null);
+  ctx.restore();
+  dashedCellRect(offX, offY, offX + clip.w - 1, offY + clip.h - 1);
+}
+
+document.getElementById('cutBtn').addEventListener('click', doCut);
+document.getElementById('copyBtn').addEventListener('click', doCopy);
+document.getElementById('pasteBtn').addEventListener('click', startPaste);
+
 // --- persistence ---
 function serialize() {
   return { version: 4, cols, rows, cellMm: MM_CELL, cells, links: [...links], texts, borders, lines };
@@ -1366,6 +1622,7 @@ function deserialize(data) {
   lines = Array.isArray(data.lines)
     ? data.lines.filter(l => inBounds(l.x1, l.y1) && inBounds(l.x2, l.y2)).map(l => ({...l}))
     : [];
+  selection = null; updateClipboardButtons();
   document.getElementById('cols').value = cols;
   document.getElementById('rows').value = rows;
   setCanvasSize(); draw();
@@ -1645,6 +1902,7 @@ function downloadText(text, name) {
 setCanvasSize();
 restoreAutosave();
 selectTool(tool);
+updateClipboardButtons();
 </script>
 </body>
 </html>
