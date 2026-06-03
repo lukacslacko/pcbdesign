@@ -56,6 +56,20 @@
   canvas { background: #f4f4f4; box-shadow: 0 6px 24px rgba(0,0,0,.5); display: block; cursor: crosshair; image-rendering: pixelated; }
   .hint { font-size: 11px; color: #888; padding: 0 10px 4px; }
   kbd { background: #333; border: 1px solid #555; border-bottom-width: 2px; border-radius: 3px; padding: 1px 5px; font-size: 11px; font-family: ui-monospace, monospace; }
+
+  /* --- print layout (populated on demand by printBoard()) --- */
+  #printArea { display: none; }
+  @media print {
+    :root { color-scheme: light; }
+    body { display: block; background: #fff; color: #000; }
+    .toolbar, .legend, .hint, .canvas-wrap { display: none !important; }
+    #printArea { display: block !important; }
+    #printArea .print-header { font: 9pt/1.4 -apple-system, sans-serif; margin: 0 0 4mm; }
+    #printArea figure { margin: 0 0 8mm; break-inside: avoid; }
+    #printArea figcaption { font: 8pt/1.3 -apple-system, sans-serif; margin-top: 2mm; }
+    #printArea canvas { display: block; max-width: none; border: 0.2mm solid #bbb; }
+    @page { margin: 10mm; }
+  }
 </style>
 </head>
 <body>
@@ -122,6 +136,7 @@
       <button id="loadBtn">Load</button>
       <input type="file" id="loadFile" accept=".json,application/json">
       <button id="exportBtn">Export SCAD</button>
+      <button id="printBtn" title="Print sides + overview (⌘/Ctrl+P)">Print</button>
     </div>
     <div class="info" id="info">—</div>
   </div>
@@ -141,8 +156,10 @@
     <kbd>E</kbd>/<kbd>B</kbd>/<kbd>T</kbd>/<kbd>S</kbd>/<kbd>H</kbd>/<kbd>D</kbd>/<kbd>X</kbd>/<kbd>O</kbd>/<kbd>L</kbd>/<kbd>M</kbd> pick tools.
     Board / Erase / Border / Select = rectangle drag · Trace / Hole = axis-parallel line · Line = free center-to-center segment · Bus = parallel lines (perpendicular offset follows drag direction) · DIP / Text = click to place · <kbd>R</kbd> rotates DIP and Text. Right-drag always erases. <kbd>⌘/Ctrl+Z</kbd> undo · <kbd>⌘/Ctrl+Shift+Z</kbd> redo.
     Select a rectangle, then <kbd>⌘/Ctrl+C</kbd> copy · <kbd>⌘/Ctrl+X</kbd> cut · <kbd>⌘/Ctrl+V</kbd> paste (click to stamp, repeat freely, <kbd>Esc</kbd> cancels).
+    <kbd>⌘/Ctrl+P</kbd> print: bottom side (mirrored), top side, and the on-screen view stacked, each at true size — print at 100% scale.
   </div>
   <div class="canvas-wrap" id="wrap"><canvas id="grid"></canvas></div>
+  <div id="printArea"></div>
 
 <script>
 'use strict';
@@ -341,6 +358,12 @@ window.addEventListener('keydown', e => {
   if ((e.metaKey || e.ctrlKey) && k === 'y') {
     e.preventDefault();
     redo();
+    return;
+  }
+  // Print our own layout instead of the browser's default page capture.
+  if ((e.metaKey || e.ctrlKey) && k === 'p') {
+    e.preventDefault();
+    printBoard();
     return;
   }
 
@@ -1664,6 +1687,178 @@ function restoreAutosave() {
     return true;
   } catch { return false; }
 }
+
+// --- printing ---
+//
+// Builds a print-only layout (#printArea, shown only by the @media print rules)
+// holding three views and calls window.print(). True size is achieved by sizing
+// each canvas in physical mm via CSS: one cell = MM_CELL mm, so the printer
+// renders it 1:1 (provided the user prints at 100%, not "fit to page").
+//
+//   top-left  : bottom side — traces + holes, mirrored (it's the underside)
+//   top-right : top side    — holes + boxes + lines + text
+//   below     : 2× overview — the full colour view, exactly as drawn on screen
+//
+// The two side views are black line art (silkscreen white would vanish on
+// paper); the overview keeps the UI palette. Printing never affects the SCAD
+// export — it just re-reads the current board state.
+
+// Faint cell grid, matching drawGrid(), for the on-screen-style overview.
+function drawPrintGrid(g, px) {
+  g.strokeStyle = 'rgba(0,0,0,0.12)';
+  g.lineWidth = 1;
+  g.beginPath();
+  for (let x = 0; x <= cols; x++) { const p = Math.round(x * px) + 0.5; g.moveTo(p, 0); g.lineTo(p, rows * px); }
+  for (let y = 0; y <= rows; y++) { const p = Math.round(y * px) + 0.5; g.moveTo(0, p); g.lineTo(cols * px, p); }
+  g.stroke();
+  g.strokeStyle = 'rgba(0,0,0,0.22)';
+  g.beginPath();
+  for (let x = 0; x <= cols; x += 5) { const p = Math.round(x * px) + 0.5; g.moveTo(p, 0); g.lineTo(p, rows * px); }
+  for (let y = 0; y <= rows; y += 5) { const p = Math.round(y * px) + 0.5; g.moveTo(0, p); g.lineTo(cols * px, p); }
+  g.stroke();
+}
+
+// Render the board into context g at px pixels/cell.
+//   mode    : 'lineart' (black on white) | 'ui' (full colour, like the canvas)
+//   copper  : draw trace/hole pads and their connecting arms
+//   marks   : draw borders, jumper lines and text glyphs
+//   mirror  : flip horizontally (for the bottom side)
+// Holes are drilled through every side, so they are always drawn, last/on top.
+function renderPrintBoard(g, px, opts) {
+  const { mode, copper, marks, mirror } = opts;
+  const k = px / MM_CELL;
+  const W = cols * px, H = rows * px;
+  const ink = mode === 'ui' ? null : '#000000';
+
+  g.fillStyle = mode === 'ui' ? COLOR_EMPTY : '#ffffff';
+  g.fillRect(0, 0, W, H);
+
+  g.save();
+  if (mirror) { g.translate(W, 0); g.scale(-1, 1); }
+
+  if (mode === 'ui') {
+    drawPrintGrid(g, px);
+    g.fillStyle = COLOR_BOARD;
+    for (let y = 0; y < rows; y++)
+      for (let x = 0; x < cols; x++)
+        if (cells[y][x] !== 'empty') g.fillRect(x * px, y * px, px, px);
+  } else {
+    // Board extent as a thin silhouette: every cell edge facing empty/outside.
+    g.strokeStyle = '#9a9a9a';
+    g.lineWidth = Math.max(1, 0.12 * k);
+    g.beginPath();
+    for (let y = 0; y < rows; y++) {
+      for (let x = 0; x < cols; x++) {
+        if (cells[y][x] === 'empty') continue;
+        const x0 = x * px, y0 = y * px, x1 = (x + 1) * px, y1 = (y + 1) * px;
+        if (y === 0        || cells[y - 1][x] === 'empty') { g.moveTo(x0, y0); g.lineTo(x1, y0); }
+        if (y === rows - 1 || cells[y + 1][x] === 'empty') { g.moveTo(x0, y1); g.lineTo(x1, y1); }
+        if (x === 0        || cells[y][x - 1] === 'empty') { g.moveTo(x0, y0); g.lineTo(x0, y1); }
+        if (x === cols - 1 || cells[y][x + 1] === 'empty') { g.moveTo(x1, y0); g.lineTo(x1, y1); }
+      }
+    }
+    g.stroke();
+  }
+
+  if (copper) {
+    const padSize = px * TRACE_FRAC, armLen = (px - padSize) / 2, padOff = armLen;
+    g.fillStyle = ink || COLOR_TRACE;
+    for (let y = 0; y < rows; y++) {
+      for (let x = 0; x < cols; x++) {
+        const s = cells[y][x];
+        if (s !== 'trace' && s !== 'hole') continue;
+        const px0 = x * px, py0 = y * px;
+        g.fillRect(px0 + padOff, py0 + padOff, padSize, padSize);
+        if (links.has('v:' + x + ',' + (y - 1))) g.fillRect(px0 + padOff, py0, padSize, armLen);
+        if (links.has('v:' + x + ',' + y))       g.fillRect(px0 + padOff, py0 + padOff + padSize, padSize, armLen);
+        if (links.has('h:' + (x - 1) + ',' + y)) g.fillRect(px0, py0 + padOff, armLen, padSize);
+        if (links.has('h:' + x + ',' + y))       g.fillRect(px0 + padOff + padSize, py0 + padOff, armLen, padSize);
+      }
+    }
+  }
+
+  if (marks) {
+    const col = ink || COLOR_WHITE;
+    g.fillStyle = col;
+    g.save();
+    if (mode === 'ui') g.globalAlpha = BORDER_UI_ALPHA;
+    for (const b of borders)
+      for (const r of borderRectsDesign(b)) g.fillRect(r.x * k, r.y * k, r.w * k, r.h * k);
+    g.restore();
+    g.strokeStyle = col;
+    g.lineWidth = Math.max(1, MM_PIXEL * k);
+    g.lineCap = 'butt';
+    for (const l of lines) {
+      g.beginPath();
+      g.moveTo((l.x1 + 0.5) * px, (l.y1 + 0.5) * px);
+      g.lineTo((l.x2 + 0.5) * px, (l.y2 + 0.5) * px);
+      g.stroke();
+    }
+    g.fillStyle = col;
+    const pxSize = MM_PIXEL * k, drawSize = pxSize + 0.5;
+    for (const t of texts)
+      for (const p of textPixels(t))
+        g.fillRect(p.cxMm * k - pxSize / 2, p.cyMm * k - pxSize / 2, drawSize, drawSize);
+  }
+
+  // Line art: holes punch white through the black copper (bottom side) so the
+  // drill point is visible, but stay black on the bare white top side.
+  const holeCol = mode === 'ui' ? COLOR_HOLE : (copper ? '#ffffff' : '#000000');
+  const hSize = px * HOLE_FRAC, hOff = (px - hSize) / 2;
+  g.fillStyle = holeCol;
+  for (let y = 0; y < rows; y++)
+    for (let x = 0; x < cols; x++)
+      if (cells[y][x] === 'hole') g.fillRect(x * px + hOff, y * px + hOff, hSize, hSize);
+
+  g.restore();
+}
+
+function printBoard() {
+  const area = document.getElementById('printArea');
+  area.innerHTML = '';
+  // Backing resolution per cell — ~300 dpi at true size, capped so the canvas
+  // stays within browser limits for very large grids.
+  const internalPx = Math.max(8, Math.min(30, Math.floor(4000 / Math.max(cols, rows, 1))));
+
+  const panel = (opts, scale, caption) => {
+    const c = document.createElement('canvas');
+    c.width = cols * internalPx;
+    c.height = rows * internalPx;
+    renderPrintBoard(c.getContext('2d'), internalPx, opts);
+    c.style.width  = (cols * MM_CELL * scale) + 'mm';
+    c.style.height = (rows * MM_CELL * scale) + 'mm';
+    const fig = document.createElement('figure');
+    const cap = document.createElement('figcaption');
+    cap.textContent = caption;
+    fig.appendChild(c);
+    fig.appendChild(cap);
+    return fig;
+  };
+
+  const bw = (cols * MM_CELL).toFixed(1), bh = (rows * MM_CELL).toFixed(1);
+  const header = document.createElement('div');
+  header.className = 'print-header';
+  header.textContent = `PCB — ${cols} × ${rows} cells · ${bw} × ${bh} mm · ` +
+    'print at 100% scale (disable "Fit to page") for true size';
+
+  // All three views at true size, stacked vertically.
+  area.appendChild(header);
+  area.appendChild(panel({ mode: 'lineart', copper: true,  marks: false, mirror: true  }, 1,
+    'Bottom side · mirrored · true size (traces + holes)'));
+  area.appendChild(panel({ mode: 'lineart', copper: false, marks: true,  mirror: false }, 1,
+    'Top side · true size (holes, boxes, lines, text)'));
+  area.appendChild(panel({ mode: 'ui', copper: true, marks: true, mirror: false }, 1,
+    'Overview · true size · as shown on screen'));
+
+  window.print();
+}
+
+document.getElementById('printBtn').addEventListener('click', printBoard);
+// Free the (potentially large) print canvases once the dialog closes.
+window.addEventListener('afterprint', () => {
+  const area = document.getElementById('printArea');
+  if (area) area.innerHTML = '';
+});
 
 // --- OpenSCAD export ---
 //
