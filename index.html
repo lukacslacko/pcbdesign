@@ -155,7 +155,7 @@
   <div class="hint">
     <kbd>E</kbd>/<kbd>B</kbd>/<kbd>T</kbd>/<kbd>S</kbd>/<kbd>H</kbd>/<kbd>D</kbd>/<kbd>X</kbd>/<kbd>O</kbd>/<kbd>L</kbd>/<kbd>M</kbd> pick tools.
     Board / Erase / Border / Select = rectangle drag · Trace / Hole = axis-parallel line · Line = free center-to-center segment · Bus = parallel lines (perpendicular offset follows drag direction) · DIP / Text = click to place · <kbd>R</kbd> rotates DIP and Text. Right-drag always erases. <kbd>⌘/Ctrl+Z</kbd> undo · <kbd>⌘/Ctrl+Shift+Z</kbd> redo.
-    Select a rectangle, then <kbd>⌘/Ctrl+C</kbd> copy · <kbd>⌘/Ctrl+X</kbd> cut · <kbd>⌘/Ctrl+V</kbd> paste (click to stamp, repeat freely, <kbd>Esc</kbd> cancels).
+    Select a rectangle, then <kbd>⌘/Ctrl+C</kbd> copy · <kbd>⌘/Ctrl+X</kbd> cut · <kbd>⌘/Ctrl+V</kbd> paste (click to stamp, <kbd>R</kbd> rotates, repeat freely, <kbd>Esc</kbd> cancels).
     <kbd>⌘/Ctrl+P</kbd> print: bottom side (mirrored), top side, and the on-screen view stacked, each at true size — print at 100% scale.
   </div>
   <div class="canvas-wrap" id="wrap"><canvas id="grid"></canvas></div>
@@ -378,6 +378,8 @@ window.addEventListener('keydown', e => {
     if (pasting)        { cancelPaste(); return; }
     if (selection)      { selection = null; updateClipboardButtons(); draw(); return; }
   }
+  // R rotates the fragment being pasted (takes precedence over tool rotation).
+  if (pasting && k === 'r') { rotatePaste(); e.preventDefault(); return; }
 
   if (tool === 'dip') {
     if (e.key === '4') { setDipPins(8);  e.preventDefault(); return; }
@@ -1481,11 +1483,53 @@ function doCut() {
   flashInfo(`Cut ${clipboard.w} × ${clipboard.h} cells`);
 }
 
+// Rotate a captured fragment 90° clockwise, returning a new fragment (its w/h
+// swap). A cell at (cx, cy) in a W×H fragment maps to (H-1-cy, cx); links are
+// re-derived between rotated endpoints, text reading direction advances 90°,
+// and border/line endpoints rotate with the cells.
+function rotateClip(clip) {
+  const W = clip.w, H = clip.h;
+  const R = (x, y) => ({ x: H - 1 - y, y: x });
+  const cells = Array.from({ length: W }, () => Array(H).fill('empty'));
+  for (let cy = 0; cy < H; cy++)
+    for (let cx = 0; cx < W; cx++) {
+      const p = R(cx, cy);
+      cells[p.y][p.x] = clip.cells[cy][cx];
+    }
+  const links = clip.links.map(k => {
+    const m = LINK_RE.exec(k);
+    const x = +m[2], y = +m[3];
+    const a = R(x, y), b = m[1] === 'h' ? R(x + 1, y) : R(x, y + 1);
+    return linkKey(a.x, a.y, b.x, b.y);
+  });
+  const texts = clip.texts.map(t => {
+    const p = R(t.x, t.y);
+    return { x: p.x, y: p.y, rot: (t.rot + 90) % 360, text: t.text };
+  });
+  const borders = clip.borders.map(b => {
+    const a = R(b.x0, b.y0), c = R(b.x1, b.y1);
+    return { x0: Math.min(a.x, c.x), y0: Math.min(a.y, c.y), x1: Math.max(a.x, c.x), y1: Math.max(a.y, c.y) };
+  });
+  const lines = clip.lines.map(l => {
+    const a = R(l.x1, l.y1), b = R(l.x2, l.y2);
+    return { x1: a.x, y1: a.y, x2: b.x, y2: b.y };
+  });
+  return { w: H, h: W, cells, links, texts, borders, lines };
+}
+
 function startPaste() {
   if (!clipboard) return;
   pasting = true;
   canvas.style.cursor = 'copy';
-  flashInfo('Paste: click to place · Esc to cancel');
+  flashInfo('Paste: click to place · R to rotate · Esc to cancel');
+  draw();
+}
+
+// Rotate the fragment currently being placed (R in paste mode). Mutates the
+// clipboard so repeated stamps and re-entry keep the chosen orientation.
+function rotatePaste() {
+  if (!pasting || !clipboard) return;
+  clipboard = rotateClip(clipboard);
   draw();
 }
 
