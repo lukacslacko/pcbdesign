@@ -41,9 +41,11 @@
   .legend { display: flex; gap: 12px; align-items: center; padding: 6px 10px; background: #252525; border-bottom: 1px solid #444; font-size: 12px; color: #aaa; }
   .legend .swatch { display: inline-flex; align-items: center; gap: 6px; }
   .legend .sq { width: 14px; height: 14px; border: 1px solid #555; border-radius: 2px; }
-  .dip-only, .bus-only, .text-only { display: none !important; }
+  .dip-only, .sil-only, .bus-only, .text-only { display: none !important; }
   body.dip-active .dip-only { display: flex !important; }
   body.dip-active .dip-only.sep { display: block !important; }
+  body.sil-active .sil-only { display: flex !important; }
+  body.sil-active .sil-only.sep { display: block !important; }
   body.bus-active .bus-only { display: flex !important; }
   body.bus-active .bus-only.sep { display: block !important; }
   body.text-active .text-only { display: flex !important; }
@@ -81,18 +83,33 @@
       <button data-tool="bus"   title="Bus — parallel traces (S)">Bus</button>
       <button data-tool="hole"  title="Hole line (H)">Hole</button>
       <button data-tool="dip"   title="DIP package (D)">DIP</button>
+      <button data-tool="sil"   title="SIL / header — single in-line (I)">SIL</button>
+      <button data-tool="ftrace" title="Fine trace — narrow breakout (F)">F-trace</button>
       <button data-tool="text"  title="Text label (X)">Text</button>
       <button data-tool="border" title="Border box (O)">Border</button>
       <button data-tool="line"  title="White line / jumper (L)">Line</button>
       <button data-tool="select" title="Select rectangle (M)">Select</button>
+    </div>
+    <div class="sep"></div>
+    <div class="group">
+      <label>Pitch</label>
+      <button id="pitch1" title="2.54 mm cells, 1.6 mm traces">2.54 mm</button>
+      <button id="pitch2" class="active" title="5.08 mm cells, 3.2 mm traces (double pitch)">5.08 mm</button>
     </div>
     <div class="sep dip-only"></div>
     <div class="group dip-only">
       <label>Pins</label><input type="number" id="dipPins" value="8" min="2" max="64" step="2">
       <button id="dipNarrow" class="active" title="0.3-inch-style narrow body">Narrow</button>
       <button id="dipBroad" title="0.6-inch-style wide body">Broad</button>
-      <button id="dipRotate" title="Rotate orientation (R)">Rotate</button>
-      <span style="color:#777;font-size:11px">4 / 8 / 0 → 8 / 16 / 20 pins</span>
+      <button id="dipRotate" title="Rotate (R)">Rotate</button>
+      <span style="color:#777;font-size:11px">4 / 8 / 0 → 8 / 16 / 20 pins · 2.54 mm pins</span>
+    </div>
+    <div class="sep sil-only"></div>
+    <div class="group sil-only">
+      <label>Pins</label><input type="number" id="silPins" value="4" min="1" max="40">
+      <button id="silEdge" title="Edge header: add a support strip for 90° bent pins">Edge</button>
+      <button id="silRotate" title="Rotate (R)">Rotate</button>
+      <span style="color:#777;font-size:11px">1–9 / 0 → 1–9 / 10 pins · 2.54 mm pins</span>
     </div>
     <div class="sep bus-only"></div>
     <div class="group bus-only">
@@ -150,13 +167,14 @@
     <span class="swatch"><span class="sq" style="background:#1d6b3e;color:#fff;font-size:10px;display:flex;align-items:center;justify-content:center;font-family:ui-monospace,monospace">A</span> Text label (white 0.4 mm pixels, embedded between board layers)</span>
     <span class="swatch"><span class="sq" style="background:#1d6b3e;position:relative"><span style="position:absolute;inset:2px;border:2px solid #fff;border-radius:1px"></span></span> Border (white 0.4 mm frame)</span>
     <span class="swatch"><span class="sq" style="background:#1d6b3e;position:relative"><span style="position:absolute;left:2px;right:2px;top:50%;height:2px;transform:translateY(-50%);background:#fff"></span></span> White line / jumper (0.4 mm)</span>
-    <span class="swatch" style="margin-left:auto">Cell = 2.54 mm (0.1″)</span>
+    <span class="swatch"><span class="sq" style="background:#1d6b3e;position:relative"><span style="position:absolute;left:50%;top:2px;bottom:2px;width:2px;transform:translateX(-50%);background:#d4a017"></span></span> Fine trace (1.6 mm, narrow breakout)</span>
+    <span class="swatch" style="margin-left:auto">Coarse cell = pitch × 2.54 mm · pins = 2.54 mm</span>
   </div>
   <div class="hint">
-    <kbd>E</kbd>/<kbd>B</kbd>/<kbd>T</kbd>/<kbd>S</kbd>/<kbd>H</kbd>/<kbd>D</kbd>/<kbd>X</kbd>/<kbd>O</kbd>/<kbd>L</kbd>/<kbd>M</kbd> pick tools.
-    Board / Erase / Border / Select = rectangle drag · Trace / Hole = axis-parallel line · Line = free center-to-center segment · Bus = parallel lines (perpendicular offset follows drag direction) · DIP / Text = click to place · <kbd>R</kbd> rotates DIP and Text. Right-drag always erases. <kbd>⌘/Ctrl+Z</kbd> undo · <kbd>⌘/Ctrl+Shift+Z</kbd> redo.
-    Select a rectangle, then <kbd>⌘/Ctrl+C</kbd> copy · <kbd>⌘/Ctrl+X</kbd> cut · <kbd>⌘/Ctrl+V</kbd> paste (click to stamp, <kbd>R</kbd> rotates, repeat freely, <kbd>Esc</kbd> cancels).
-    <kbd>⌘/Ctrl+P</kbd> print: bottom side (mirrored), top side, and the on-screen view stacked, each at true size — print at 100% scale.
+    <kbd>E</kbd>/<kbd>B</kbd>/<kbd>T</kbd>/<kbd>S</kbd>/<kbd>H</kbd>/<kbd>D</kbd>/<kbd>I</kbd>/<kbd>F</kbd>/<kbd>X</kbd>/<kbd>O</kbd>/<kbd>L</kbd>/<kbd>M</kbd> pick tools.
+    Board / Erase / Border / Select = rectangle drag · Trace / Hole = axis-parallel line · Line/F-trace = free segment · Bus = parallel lines · DIP (D) / SIL (I) / Text = click to place · <kbd>R</kbd> rotates DIP/SIL/Text. Right-drag always erases. <kbd>⌘/Ctrl+Z</kbd> undo.
+    <b>Pitch</b>: 2.54 mm (classic) or 5.08 mm (double, 3.2 mm traces). DIP/SIL keep 2.54 mm pins inside the coarse grid; route them out with the F-trace tool (narrow copper, snaps to the 2.54 mm sub-grid). SIL <b>Edge</b> adds a support strip for 90° bent header pins.
+    Select then <kbd>⌘/Ctrl+C</kbd>/<kbd>X</kbd>/<kbd>V</kbd> copy/cut/paste · <kbd>⌘/Ctrl+P</kbd> print true-size sides + overview.
   </div>
   <div class="canvas-wrap" id="wrap"><canvas id="grid"></canvas></div>
   <div id="printArea"></div>
@@ -165,15 +183,29 @@
 'use strict';
 
 // --- physical constants (mm) ---
-const MM_CELL        = 2.54; // 0.1" grid — matches DIP pin pitch
+// The board has two pitches. The COARSE grid (cells/links/board/coarse traces)
+// has a configurable pitch = `pitch` fine units; default 2 ⇒ 5.08 mm cells with
+// 3.2 mm traces (convenient for 3D-printed boards + copper tape). pitch = 1 ⇒ the
+// classic 2.54 mm board. Components (DIP/SIL) always keep the FINE 2.54 mm pin
+// pitch and are routed out with narrow fine traces.
+const MM_FINE        = 2.54; // fine pitch = component pin pitch (0.1")
+const BASE_TRACE_W   = 1.6;  // coarse trace / pad width at pitch 1
+let   pitch          = 2;    // coarse pitch in fine units (1 or 2); set by load/New
+let   mmCell         = pitch * MM_FINE;      // physical mm per coarse cell
+let   mmTraceW       = pitch * BASE_TRACE_W; // coarse pad / trace width (scales with pitch)
 const MM_BOARD       = 1.1; // board base thickness (0.6 mm thicker than the original 0.5)
 const MM_TRACE       = 0.3;
-const MM_TRACE_W     = 1.6; // pad / trace width (centered in cell)
-const MM_HOLE        = 1.0;
+const MM_HOLE        = 1.0;  // drilled hole size (fixed, independent of pitch)
 const MM_HOLE_BOTTOM = 0.18;
+const FINE_TRACE_W   = BASE_TRACE_W; // narrow hand-routed breakout trace width (1.6 mm)
 
-const TRACE_FRAC = MM_TRACE_W / MM_CELL;
-const HOLE_FRAC  = MM_HOLE    / MM_CELL;
+const TRACE_FRAC = BASE_TRACE_W / MM_FINE;       // coarse pad as a fraction of a cell (pitch-independent)
+function holeFrac() { return MM_HOLE / mmCell; } // hole as a fraction of a coarse cell
+function applyPitch(p) {
+  pitch = (p === 1 || p === 2) ? p : 2;
+  mmCell = pitch * MM_FINE;
+  mmTraceW = pitch * BASE_TRACE_W;
+}
 
 // --- visual constants ---
 const COLOR_EMPTY = '#f4f4f4';
@@ -253,10 +285,16 @@ let links = new Set(); // edge keys; see linkKey()
 let texts = [];        // [{ x, y, rot, text }]   x/y = origin cell, rot in {0,90,180,270}
 let borders = [];      // [{ x0, y0, x1, y1 }]    normalized cell rectangle (white frame)
 let lines = [];        // [{ x1, y1, x2, y2 }]    free center-to-center white line
+// Components keep the FINE 2.54 mm pin pitch regardless of the coarse pitch.
+// fx/fy are fine-grid coordinates (cols*pitch by rows*pitch fine cells).
+let components = [];   // [{ type:'dip'|'sil', fx, fy, pins, rot, width?, edge? }]
+// Fine (narrow) copper traces hand-routed on the fine lattice, free segments.
+let ftraces = [];      // [{ fx1, fy1, fx2, fy2 }]   center-to-center, FINE_TRACE_W wide
 let tool = 'board';
 let cellPx = 28;
-let drag = null;       // { start:{x,y}, end:{x,y}, tool, button }
-let hover = null;      // {x,y}
+let drag = null;       // { start:{x,y}, end:{x,y}, tool, button, fine? }
+let hover = null;      // {x,y}     coarse cell under cursor
+let hoverFine = null;  // {fx,fy}   fine cell under cursor (component / fine-trace tools)
 
 // Selection + clipboard (cut / copy / paste). The clipboard is in-app only
 // (a JS object), not the system clipboard, and lives for the session.
@@ -272,10 +310,16 @@ const HISTORY_MAX = 200;
 // DIP options
 let dipPins   = 8;
 let dipWidth  = 'narrow';
-let dipOrient = 'h';
-const DIP_PITCH       = 1;
-const DIP_ROW_NARROW  = 3;
-const DIP_ROW_BROAD   = 6;
+const DIP_PITCH       = 1;  // fine units between pins along a row
+const DIP_ROW_NARROW  = 3;  // fine units between the two pin rows (0.3")
+const DIP_ROW_BROAD   = 6;  // (0.6")
+
+// SIL (single in-line) options
+let silPins = 4;
+let silEdge = false;        // true = edge header: add a support strip for bent pins
+
+// Shared placement rotation for DIP/SIL components (0/90/180/270, R cycles).
+let compRot = 0;
 
 // Bus options
 let busLines = 2;
@@ -331,6 +375,7 @@ function selectTool(t) {
     btn.classList.toggle('active', btn.dataset.tool === t);
   }
   document.body.classList.toggle('dip-active', t === 'dip');
+  document.body.classList.toggle('sil-active', t === 'sil');
   document.body.classList.toggle('bus-active', t === 'bus');
   document.body.classList.toggle('text-active', t === 'text');
   canvas.style.cursor = TOOL_CURSORS[t] || 'crosshair';
@@ -340,6 +385,11 @@ function selectTool(t) {
 function setDipPins(n) {
   dipPins = n;
   document.getElementById('dipPins').value = n;
+  draw();
+}
+function setSilPins(n) {
+  silPins = n;
+  document.getElementById('silPins').value = n;
   draw();
 }
 function setBusLines(n) {
@@ -387,7 +437,12 @@ window.addEventListener('keydown', e => {
     if (e.key === '4') { setDipPins(8);  e.preventDefault(); return; }
     if (e.key === '8') { setDipPins(16); e.preventDefault(); return; }
     if (e.key === '0') { setDipPins(20); e.preventDefault(); return; }
-    if (k === 'r')     { dipOrient = dipOrient === 'h' ? 'v' : 'h'; draw(); return; }
+    if (k === 'r')     { rotateComp(); e.preventDefault(); return; }
+  }
+  if (tool === 'sil') {
+    if (e.key >= '1' && e.key <= '9') { setSilPins(parseInt(e.key, 10)); e.preventDefault(); return; }
+    if (e.key === '0') { setSilPins(10); e.preventDefault(); return; }
+    if (k === 'r')     { rotateComp(); e.preventDefault(); return; }
   }
   if (tool === 'bus') {
     if (e.key >= '1' && e.key <= '9') { setBusLines(parseInt(e.key, 10)); e.preventDefault(); return; }
@@ -403,6 +458,8 @@ window.addEventListener('keydown', e => {
   else if (k === 's') selectTool('bus');
   else if (k === 'h') selectTool('hole');
   else if (k === 'd') selectTool('dip');
+  else if (k === 'i') selectTool('sil');
+  else if (k === 'f') selectTool('ftrace');
   else if (k === 'x') selectTool('text');
   else if (k === 'o') selectTool('border');
   else if (k === 'l') selectTool('line');
@@ -414,6 +471,7 @@ function rotateText() {
   document.getElementById('textRotate').textContent = 'Rot ' + textRot + '°';
   draw();
 }
+function rotateComp() { compRot = (compRot + 90) % 360; draw(); }
 
 // --- tool cursors (built as SVG data URLs) ---
 function cursorUrl(inner) {
@@ -431,6 +489,8 @@ const TOOL_CURSORS = {
   border: cursorUrl(`<rect x='3' y='3' width='18' height='18' fill='rgba(29,107,62,0.7)' stroke='#0e3a22' stroke-width='1'/><rect x='5' y='5' width='14' height='14' fill='none' stroke='#fff' stroke-width='2'/>`),
   line:  cursorUrl(`<rect x='3' y='3' width='18' height='18' fill='rgba(29,107,62,0.7)' stroke='#0e3a22' stroke-width='1'/><line x1='5' y1='19' x2='19' y2='5' stroke='#fff' stroke-width='2.5'/>`),
   select: cursorUrl(`<rect x='3' y='3' width='18' height='18' fill='none' stroke='#39d0ff' stroke-width='2' stroke-dasharray='3 2'/>`),
+  sil:   cursorUrl(`<rect x='10' y='3' width='5' height='18' rx='1' fill='#333' stroke='#111' stroke-width='1'/><circle cx='12.5' cy='6' r='1.4' fill='#d4a017'/><circle cx='12.5' cy='11' r='1.4' fill='#d4a017'/><circle cx='12.5' cy='16' r='1.4' fill='#d4a017'/>`),
+  ftrace: cursorUrl(`<rect x='3' y='3' width='18' height='18' fill='rgba(29,107,62,0.6)' stroke='#0e3a22' stroke-width='1'/><line x1='5' y1='19' x2='19' y2='5' stroke='#d4a017' stroke-width='1.5'/>`),
 };
 
 // DIP controls
@@ -454,10 +514,41 @@ document.getElementById('dipBroad').addEventListener('click', () => {
   document.getElementById('dipNarrow').classList.remove('active');
   draw();
 });
-document.getElementById('dipRotate').addEventListener('click', () => {
-  dipOrient = dipOrient === 'h' ? 'v' : 'h';
+document.getElementById('dipRotate').addEventListener('click', rotateComp);
+
+// SIL controls
+document.getElementById('silPins').addEventListener('input', e => {
+  let n = parseInt(e.target.value, 10);
+  if (Number.isNaN(n) || n < 1) n = 1;
+  if (n > 40) n = 40;
+  silPins = n;
   draw();
 });
+document.getElementById('silEdge').addEventListener('click', () => {
+  silEdge = !silEdge;
+  document.getElementById('silEdge').classList.toggle('active', silEdge);
+  draw();
+});
+document.getElementById('silRotate').addEventListener('click', rotateComp);
+
+// Pitch control
+function updatePitchButtons() {
+  document.getElementById('pitch1').classList.toggle('active', pitch === 1);
+  document.getElementById('pitch2').classList.toggle('active', pitch === 2);
+}
+function setBoardPitch(p) {
+  if (p === pitch) return;
+  pushHistory();
+  applyPitch(p);
+  // Fine geometry must stay inside the rescaled fine grid (cols*pitch × rows*pitch).
+  components = components.filter(componentInBounds);
+  ftraces = ftraces.filter(t => inBoundsFine(t.fx1, t.fy1) && inBoundsFine(t.fx2, t.fy2));
+  updatePitchButtons();
+  autosave();
+  draw();
+}
+document.getElementById('pitch1').addEventListener('click', () => setBoardPitch(1));
+document.getElementById('pitch2').addEventListener('click', () => setBoardPitch(2));
 
 // Bus controls
 document.getElementById('busLines').addEventListener('input', e => {
@@ -491,6 +582,8 @@ document.getElementById('newBtn').addEventListener('click', () => {
   texts = [];
   borders = [];
   lines = [];
+  components = [];
+  ftraces = [];
   selection = null; updateClipboardButtons();
   autosave(); draw();
 });
@@ -534,6 +627,8 @@ function resizeGrid(c, r) {
   texts = texts.filter(t => t.x >= 0 && t.x < cols && t.y >= 0 && t.y < rows);
   borders = borders.filter(b => b.x0 >= 0 && b.y0 >= 0 && b.x1 < cols && b.y1 < rows);
   lines = lines.filter(l => inBounds(l.x1, l.y1) && inBounds(l.x2, l.y2));
+  components = components.filter(componentInBounds);
+  ftraces = ftraces.filter(t => inBoundsFine(t.fx1, t.fy1) && inBoundsFine(t.fx2, t.fy2));
   selection = null; updateClipboardButtons();
   document.getElementById('cols').value = cols;
   document.getElementById('rows').value = rows;
@@ -619,7 +714,7 @@ function busSegments(s, e) {
 // --- drawing ---
 
 // Per-frame overrides so previews share the same neighbor-aware renderer.
-let overrides = { cells: new Map(), addLinks: new Set(), removeLinks: new Set(), removeTexts: new Set(), removeBorders: new Set(), removeLines: new Set() };
+let overrides = { cells: new Map(), addLinks: new Set(), removeLinks: new Set(), removeTexts: new Set(), removeBorders: new Set(), removeLines: new Set(), removeComponents: new Set(), removeFtraces: new Set() };
 function ovKey(x, y) { return y * 10000 + x; }
 
 function paintCellOverride(map, x, y, state) {
@@ -638,6 +733,8 @@ function buildOverrides() {
   const remT = new Set();
   const remB = new Set();
   const remLn = new Set();
+  const remComp = new Set();
+  const remFt = new Set();
 
   function applyErasePlan(planCells) {
     const ep = erasePlan(planCells);
@@ -645,9 +742,11 @@ function buildOverrides() {
       cMap.set(ovKey(c.x, c.y), c.newState);
       for (const k of linksTouching(c.x, c.y)) remL.add(k);
     }
-    for (const i of ep.textIndices)   remT.add(i);
-    for (const i of ep.borderIndices) remB.add(i);
-    for (const i of ep.lineIndices)   remLn.add(i);
+    for (const i of ep.textIndices)      remT.add(i);
+    for (const i of ep.borderIndices)    remB.add(i);
+    for (const i of ep.lineIndices)      remLn.add(i);
+    for (const i of ep.componentIndices) remComp.add(i);
+    for (const i of ep.ftraceIndices)    remFt.add(i);
   }
 
   function applyPlan(plan, target) {
@@ -679,19 +778,17 @@ function buildOverrides() {
   }
 
   if (drag) {
-    // Borders, lines and the selection marquee don't touch cells or links —
-    // their preview is drawn separately in draw(); skip the override machinery.
-    if (drag.tool !== 'border' && drag.tool !== 'line' && drag.tool !== 'select') {
+    // Borders, lines, fine traces, the marquee and components don't touch the
+    // coarse cells/links — their preview is drawn separately in draw().
+    const passive = ['border', 'line', 'select', 'ftrace'];
+    if (!passive.includes(drag.tool)) {
       const target = targetStateFor(drag.tool);
       applyPlan(actionPlan(drag.tool, drag.start, drag.end), target);
     }
   } else if (hover && !pasting) {
-    if (tool === 'dip') {
-      for (const h of dipHoles(hover.x, hover.y)) {
-        if (inBounds(h.x, h.y)) cMap.set(ovKey(h.x, h.y), 'hole');
-      }
-    } else if (tool === 'border' || tool === 'line' || tool === 'select') {
-      // no single-cell hover preview for border / line / select
+    if (isComponentTool(tool) || tool === 'border' || tool === 'line' ||
+        tool === 'select' || tool === 'ftrace') {
+      // no coarse-cell hover preview — drawn separately in draw()
     } else {
       const target = targetStateFor(tool);
       if (target === 'erase') {
@@ -709,7 +806,7 @@ function buildOverrides() {
     }
   }
 
-  return { cells: cMap, addLinks: addL, removeLinks: remL, removeTexts: remT, removeBorders: remB, removeLines: remLn };
+  return { cells: cMap, addLinks: addL, removeLinks: remL, removeTexts: remT, removeBorders: remB, removeLines: remLn, removeComponents: remComp, removeFtraces: remFt };
 }
 
 function isPadState(s) { return s === 'trace' || s === 'hole'; }
@@ -749,19 +846,31 @@ function draw() {
     for (let x = 0; x < cols; x++)
       drawCellShape(x, y, effectiveState(x, y));
 
+  components.forEach((c, i) => { if (!overrides.removeComponents.has(i)) drawComponent(c, false); });
+  ftraces.forEach((t, i) => { if (!overrides.removeFtraces.has(i)) strokeFtrace(t, null); });
+
   drawGrid();
   drawWhiteMarks();
   drawHoleSquares();   // holes punch through white marks, as they will in the print
+  // Component pin holes last, so they read on top of fine traces and marks.
+  components.forEach((c, i) => { if (!overrides.removeComponents.has(i)) drawComponentPins(c); });
 
   if (drag) {
     drawDragOverlay();
     if (drag.tool === 'border') drawBorderPreview(drag.start, drag.end);
     else if (drag.tool === 'line') drawLinePreview(drag.start, drag.end);
     else if (drag.tool === 'select') drawSelectionPreview(drag.start, drag.end);
+    else if (drag.tool === 'ftrace') drawFtracePreview(drag.start, drag.end);
   }
   if (!drag && !pasting && hover) {
-    if (tool === 'dip') drawDipOutline(hover.x, hover.y);
+    if (isComponentTool(tool) && hoverFine) drawComponentPreview(componentFromTool(tool, hoverFine.fx, hoverFine.fy));
     else if (tool === 'text') drawTextPreview(hover.x, hover.y);
+    else if (tool === 'ftrace' && hoverFine) {
+      const fp = cellPx / pitch;
+      ctx.strokeStyle = '#2a90ff'; ctx.lineWidth = 1.5; ctx.setLineDash([3, 2]);
+      ctx.strokeRect(hoverFine.fx * fp + 0.5, hoverFine.fy * fp + 0.5, fp - 1, fp - 1);
+      ctx.setLineDash([]);
+    }
     else if (tool === 'erase' && inBounds(hover.x, hover.y)) {
       ctx.fillStyle = 'rgba(220, 50, 50, 0.3)';
       paintErasePreviewCells(erasePlan([hover]));
@@ -783,9 +892,11 @@ function paintErasePreviewCells(ep) {
       if (inBounds(c.x, c.y)) ctx.fillRect(c.x * cellPx, c.y * cellPx, cellPx, cellPx);
     }
   };
-  for (const i of ep.textIndices)   highlightCells(textCells(texts[i]));
-  for (const i of ep.borderIndices) highlightCells(borderCells(borders[i]));
-  for (const i of ep.lineIndices)   highlightCells(lineCells(lines[i]));
+  for (const i of ep.textIndices)      highlightCells(textCells(texts[i]));
+  for (const i of ep.borderIndices)    highlightCells(borderCells(borders[i]));
+  for (const i of ep.lineIndices)      highlightCells(lineCells(lines[i]));
+  for (const i of ep.componentIndices) highlightCells(componentCoarseCells(components[i]));
+  for (const i of ep.ftraceIndices)    highlightCells(ftraceCoarseCells(ftraces[i]));
 }
 
 // All white geometry (text glyphs, borders, jumper lines) renders white.
@@ -813,7 +924,7 @@ function drawWhiteMarks() {
 // it overlaps (matching what the printed board does).
 function drawHoleSquares() {
   ctx.fillStyle = COLOR_HOLE;
-  const hSize = cellPx * HOLE_FRAC;
+  const hSize = cellPx * holeFrac();
   const hOff  = (cellPx - hSize) / 2;
   for (let y = 0; y < rows; y++) {
     for (let x = 0; x < cols; x++) {
@@ -825,7 +936,7 @@ function drawHoleSquares() {
 
 // Fill a rectangle given in design mm coords ({x, y, w, h}, y grows down).
 function fillRectDesignMm(r) {
-  const k = cellPx / MM_CELL;
+  const k = cellPx / mmCell;
   ctx.fillRect(r.x * k, r.y * k, r.w * k, r.h * k);
 }
 
@@ -836,7 +947,7 @@ function strokeLineSegment(l, alpha) {
   ctx.save();
   if (alpha != null) ctx.globalAlpha = alpha;
   ctx.strokeStyle = COLOR_WHITE;
-  ctx.lineWidth = Math.max(1, MM_PIXEL * (cellPx / MM_CELL));
+  ctx.lineWidth = Math.max(1, MM_PIXEL * (cellPx / mmCell));
   ctx.lineCap = 'butt';
   ctx.beginPath();
   ctx.moveTo(ax, ay); ctx.lineTo(bx, by);
@@ -862,7 +973,7 @@ function drawLinePreview(s, e) {
 }
 
 function drawTextPixels(textObj) {
-  const pxPerMm = cellPx / MM_CELL;
+  const pxPerMm = cellPx / mmCell;
   const pxSize  = MM_PIXEL * pxPerMm;
   // Slightly oversize the pixel by half a device pixel to avoid hairline gaps.
   const drawSize = pxSize + 0.5;
@@ -891,6 +1002,24 @@ function drawTextPreview(ox, oy) {
 }
 
 function drawGrid() {
+  // Faint fine sub-grid (2.54 mm lattice) inside each coarse cell when pitch > 1.
+  if (pitch > 1) {
+    const fp = cellPx / pitch;
+    ctx.strokeStyle = 'rgba(0,0,0,0.06)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let fx = 0; fx <= cols * pitch; fx++) {
+      if (fx % pitch === 0) continue;
+      const px = Math.round(fx * fp) + 0.5;
+      ctx.moveTo(px, 0); ctx.lineTo(px, rows * cellPx);
+    }
+    for (let fy = 0; fy <= rows * pitch; fy++) {
+      if (fy % pitch === 0) continue;
+      const py = Math.round(fy * fp) + 0.5;
+      ctx.moveTo(0, py); ctx.lineTo(cols * cellPx, py);
+    }
+    ctx.stroke();
+  }
   ctx.strokeStyle = 'rgba(0,0,0,0.12)';
   ctx.lineWidth = 1;
   ctx.beginPath();
@@ -937,7 +1066,7 @@ function drawCellShape(x, y, state) {
   if (hasArmEast(x, y))  ctx.fillRect(px + padOff + padSize, py + padOff, armLen, padSize);
 
   if (state === 'hole') {
-    const hSize = cellPx * HOLE_FRAC;
+    const hSize = cellPx * holeFrac();
     const hOff = (cellPx - hSize) / 2;
     ctx.fillStyle = COLOR_HOLE;
     ctx.fillRect(px + hOff, py + hOff, hSize, hSize);
@@ -967,43 +1096,139 @@ function drawDragOverlay() {
 
 function inBounds(x, y) { return x >= 0 && y >= 0 && x < cols && y < rows; }
 
-// --- DIP geometry ---
-function dipHoles(originX, originY) {
-  const half = dipPins / 2;
-  const span = dipWidth === 'narrow' ? DIP_ROW_NARROW : DIP_ROW_BROAD;
+// --- components (DIP / SIL) ---
+// Components keep the fine 2.54 mm pin pitch regardless of the coarse pitch.
+// fx/fy are fine-grid coordinates; each carries its own pin holes plus a
+// support-board footprint, and is routed out to coarse traces with narrow
+// fine traces (the F-trace tool).
+const HOLE_FRAC_FINE = MM_HOLE / MM_FINE; // hole size as a fraction of a fine cell
+
+function rotOffset(dx, dy, rot) {
+  switch (rot) {
+    case 90:  return { dx: -dy, dy:  dx };
+    case 180: return { dx: -dx, dy: -dy };
+    case 270: return { dx:  dy, dy: -dx };
+    default:  return { dx,      dy };
+  }
+}
+
+function compRowSpan(c) { return c.width === 'broad' ? DIP_ROW_BROAD : DIP_ROW_NARROW; }
+
+// Pin hole fine cells of a component (rotated, absolute fine coords).
+function componentPins(c) {
   const out = [];
-  if (dipOrient === 'h') {
-    for (let i = 0; i < half; i++) {
-      out.push({ x: originX + i * DIP_PITCH, y: originY });
-      out.push({ x: originX + i * DIP_PITCH, y: originY + span });
-    }
-  } else {
-    for (let i = 0; i < half; i++) {
-      out.push({ x: originX,        y: originY + i * DIP_PITCH });
-      out.push({ x: originX + span, y: originY + i * DIP_PITCH });
-    }
+  const push = (dx, dy) => { const r = rotOffset(dx, dy, c.rot); out.push({ fx: c.fx + r.dx, fy: c.fy + r.dy }); };
+  if (c.type === 'sil') {
+    for (let i = 0; i < c.pins; i++) push(i * DIP_PITCH, 0);
+  } else { // dip — two rows separated by the body span
+    const half = c.pins / 2, span = compRowSpan(c);
+    for (let i = 0; i < half; i++) { push(i * DIP_PITCH, 0); push(i * DIP_PITCH, span); }
   }
   return out;
 }
 
-function dipBodyRect(originX, originY) {
-  const half = dipPins / 2;
-  const span = dipWidth === 'narrow' ? DIP_ROW_NARROW : DIP_ROW_BROAD;
-  if (dipOrient === 'h') {
-    return { x0: originX, y0: originY, x1: originX + (half - 1) * DIP_PITCH, y1: originY + span };
+// Support-board footprint, normalized fine-cell rect {fx0,fy0,fx1,fy1}.
+// SIL 'edge' headers add an extra fine row on the front for bent pins to rest on.
+function componentSupport(c) {
+  let L;
+  if (c.type === 'sil') {
+    const front = c.edge ? 2 : 1;
+    L = { dx0: -1, dy0: -front, dx1: c.pins, dy1: 1 };
   } else {
-    return { x0: originX, y0: originY, x1: originX + span, y1: originY + (half - 1) * DIP_PITCH };
+    const half = c.pins / 2, span = compRowSpan(c);
+    L = { dx0: -1, dy0: -1, dx1: half, dy1: span + 1 };
+  }
+  const a = rotOffset(L.dx0, L.dy0, c.rot), b = rotOffset(L.dx1, L.dy1, c.rot);
+  return {
+    fx0: c.fx + Math.min(a.dx, b.dx), fy0: c.fy + Math.min(a.dy, b.dy),
+    fx1: c.fx + Math.max(a.dx, b.dx), fy1: c.fy + Math.max(a.dy, b.dy),
+  };
+}
+
+function componentInBounds(c) {
+  const s = componentSupport(c);
+  return s.fx0 >= 0 && s.fy0 >= 0 && s.fx1 < cols * pitch && s.fy1 < rows * pitch;
+}
+
+function componentOverlaps(c, ignoreIndex) {
+  const s = componentSupport(c);
+  for (let i = 0; i < components.length; i++) {
+    if (i === ignoreIndex) continue;
+    const t = componentSupport(components[i]);
+    if (s.fx0 <= t.fx1 && t.fx0 <= s.fx1 && s.fy0 <= t.fy1 && t.fy0 <= s.fy1) return true;
+  }
+  return false;
+}
+
+// Draw a component's support board + outline. ghost = translucent placement
+// preview (which also shows the pin holes). For placed components the pin holes
+// are drawn separately, on top of fine traces, by drawComponentPins().
+function drawComponent(c, ghost) {
+  const fp = cellPx / pitch;
+  const s = componentSupport(c);
+  const sx = s.fx0 * fp, sy = s.fy0 * fp;
+  const sw = (s.fx1 - s.fx0 + 1) * fp, sh = (s.fy1 - s.fy0 + 1) * fp;
+  ctx.save();
+  if (ghost) ctx.globalAlpha = 0.6;
+  ctx.fillStyle = COLOR_BOARD;
+  ctx.fillRect(sx, sy, sw, sh);
+  if (ghost) drawComponentPins(c);  // preview shows holes immediately
+  ctx.restore();
+  ctx.strokeStyle = ghost ? '#2a90ff' : 'rgba(0,0,0,0.5)';
+  ctx.lineWidth = ghost ? 2 : 1;
+  if (ghost) ctx.setLineDash([4, 3]);
+  ctx.strokeRect(sx + 1, sy + 1, sw - 2, sh - 2);
+  ctx.setLineDash([]);
+}
+
+// Dark pin holes — drawn on top so holes always read above fine traces.
+function drawComponentPins(c) {
+  const fp = cellPx / pitch;
+  const hs = fp * HOLE_FRAC_FINE, ho = (fp - hs) / 2;
+  ctx.fillStyle = COLOR_HOLE;
+  for (const p of componentPins(c)) ctx.fillRect(p.fx * fp + ho, p.fy * fp + ho, hs, hs);
+}
+
+function drawComponentPreview(c) {
+  drawComponent(c, true);
+  if (!componentInBounds(c) || componentOverlaps(c)) {
+    const fp = cellPx / pitch, s = componentSupport(c);
+    ctx.fillStyle = 'rgba(220,50,50,0.3)';
+    ctx.fillRect(s.fx0 * fp, s.fy0 * fp, (s.fx1 - s.fx0 + 1) * fp, (s.fy1 - s.fy0 + 1) * fp);
   }
 }
 
-function drawDipOutline(ox, oy) {
-  const r = dipBodyRect(ox, oy);
-  ctx.strokeStyle = '#2a90ff';
-  ctx.lineWidth = 2;
-  ctx.setLineDash([4, 3]);
-  ctx.strokeRect(r.x0 * cellPx + 1, r.y0 * cellPx + 1,
-                 (r.x1 - r.x0 + 1) * cellPx - 2, (r.y1 - r.y0 + 1) * cellPx - 2);
-  ctx.setLineDash([]);
+function componentFromTool(toolName, fx, fy) {
+  if (toolName === 'sil') return { type: 'sil', fx, fy, pins: silPins, rot: compRot, edge: silEdge };
+  return { type: 'dip', fx, fy, pins: dipPins, rot: compRot, width: dipWidth };
+}
+
+function placeComponent(toolName, fx, fy) {
+  const c = componentFromTool(toolName, fx, fy);
+  if (!componentInBounds(c) || componentOverlaps(c)) return;
+  pushHistory();
+  components.push(c);
+  autosave();
+  draw();
+}
+
+// Index of the component whose footprint covers fine cell (fx,fy), or -1.
+function componentAtFine(fx, fy) {
+  for (let i = components.length - 1; i >= 0; i--) {
+    const s = componentSupport(components[i]);
+    if (fx >= s.fx0 && fx <= s.fx1 && fy >= s.fy0 && fy <= s.fy1) return i;
+  }
+  return -1;
+}
+
+// Coarse cells (x,y) overlapped by a component's footprint — used by erase.
+function componentCoarseCells(c) {
+  const s = componentSupport(c), out = [];
+  const cx0 = Math.floor(s.fx0 / pitch), cx1 = Math.floor(s.fx1 / pitch);
+  const cy0 = Math.floor(s.fy0 / pitch), cy1 = Math.floor(s.fy1 / pitch);
+  for (let cy = cy0; cy <= cy1; cy++)
+    for (let cx = cx0; cx <= cx1; cx++) out.push({ x: cx, y: cy });
+  return out;
 }
 
 // --- text geometry ---
@@ -1012,7 +1237,7 @@ function drawDipOutline(ox, oy) {
 // string: 0 reads right, 90 reads downward, 180 reads left, 270 reads upward.
 function* textPixels(textObj) {
   const { x, y, rot, text } = textObj;
-  const cellMm = MM_CELL;
+  const cellMm = mmCell;
   for (let i = 0; i < text.length; i++) {
     const ch = text[i].toUpperCase();
     const glyph = FONT[ch] || FONT[' '];
@@ -1086,8 +1311,8 @@ function clampRect(b) {
 // Each edge is MM_PIXEL (0.4 mm) thick, hugging the inner edge of the rectangle.
 function borderRectsDesign(b) {
   const bw = MM_PIXEL;
-  const X0 = b.x0 * MM_CELL, X1 = (b.x1 + 1) * MM_CELL;
-  const Y0 = b.y0 * MM_CELL, Y1 = (b.y1 + 1) * MM_CELL;
+  const X0 = b.x0 * mmCell, X1 = (b.x1 + 1) * mmCell;
+  const Y0 = b.y0 * mmCell, Y1 = (b.y1 + 1) * mmCell;
   return [
     { x: X0,      y: Y0,      w: X1 - X0, h: bw      }, // top
     { x: X0,      y: Y1 - bw, w: X1 - X0, h: bw      }, // bottom
@@ -1133,6 +1358,70 @@ function lineCells(l) {
   return out;
 }
 
+// --- fine (narrow) trace geometry ---
+function ftraceSegment(s, e) { return { fx1: s.fx, fy1: s.fy, fx2: e.fx, fy2: e.fy }; }
+function validFtrace(t) {
+  return inBoundsFine(t.fx1, t.fy1) && inBoundsFine(t.fx2, t.fy2) &&
+         !(t.fx1 === t.fx2 && t.fy1 === t.fy2);
+}
+// Fine cells a fine trace passes through (coarse-cell mapped) — used by erase.
+function ftraceCoarseCells(t) {
+  const out = [], seen = new Set();
+  const steps = Math.max(1, Math.ceil(Math.hypot(t.fx2 - t.fx1, t.fy2 - t.fy1) * 4));
+  for (let i = 0; i <= steps; i++) {
+    const u = i / steps;
+    const fx = t.fx1 + (t.fx2 - t.fx1) * u, fy = t.fy1 + (t.fy2 - t.fy1) * u;
+    const cx = Math.floor(fx / pitch), cy = Math.floor(fy / pitch);
+    const k = cx + ',' + cy;
+    if (!seen.has(k)) { seen.add(k); out.push({ x: cx, y: cy }); }
+  }
+  return out;
+}
+// Convex hull (monotone chain) of a small point list; returns CCW vertices.
+function convexHull(points) {
+  const pts = points.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const cross = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lower = [];
+  for (const p of pts) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
+    lower.push(p);
+  }
+  const upper = [];
+  for (let i = pts.length - 1; i >= 0; i--) {
+    const p = pts[i];
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
+    upper.push(p);
+  }
+  lower.pop(); upper.pop();
+  return lower.concat(upper);
+}
+
+// Fill the convex hull of two axis-aligned squares (side 2*half) centered at
+// (ax,ay) and (bx,by) — an f-trace segment's footprint, square-ended on cells.
+function fillSquareHull(g, ax, ay, bx, by, half) {
+  const hull = convexHull([
+    [ax - half, ay - half], [ax + half, ay - half], [ax + half, ay + half], [ax - half, ay + half],
+    [bx - half, by - half], [bx + half, by - half], [bx + half, by + half], [bx - half, by + half],
+  ]);
+  g.beginPath();
+  g.moveTo(hull[0][0], hull[0][1]);
+  for (let i = 1; i < hull.length; i++) g.lineTo(hull[i][0], hull[i][1]);
+  g.closePath();
+  g.fill();
+}
+
+function strokeFtrace(t, alpha) {
+  const fp = cellPx / pitch;
+  const half = Math.max(1, FINE_TRACE_W * (fp / MM_FINE)) / 2;
+  ctx.save();
+  if (alpha != null) ctx.globalAlpha = alpha;
+  ctx.fillStyle = COLOR_TRACE;
+  fillSquareHull(ctx, (t.fx1 + 0.5) * fp, (t.fy1 + 0.5) * fp, (t.fx2 + 0.5) * fp, (t.fy2 + 0.5) * fp, half);
+  ctx.restore();
+}
+function drawFtraces() { for (const t of ftraces) strokeFtrace(t, null); }
+function drawFtracePreview(s, e) { strokeFtrace(ftraceSegment(s, e), 0.7); }
+
 // --- input ---
 function cellAt(e) {
   const rect = canvas.getBoundingClientRect();
@@ -1140,6 +1429,15 @@ function cellAt(e) {
   const y = Math.floor((e.clientY - rect.top)  / cellPx);
   return { x, y };
 }
+
+// Fine-grid cell under the cursor (fine cells = cellPx/pitch px each).
+function fineAt(e) {
+  const rect = canvas.getBoundingClientRect();
+  const fp = cellPx / pitch;
+  return { fx: Math.floor((e.clientX - rect.left) / fp), fy: Math.floor((e.clientY - rect.top) / fp) };
+}
+function inBoundsFine(fx, fy) { return fx >= 0 && fy >= 0 && fx < cols * pitch && fy < rows * pitch; }
+function isComponentTool(t) { return t === 'dip' || t === 'sil'; }
 
 canvas.addEventListener('contextmenu', e => e.preventDefault());
 
@@ -1152,12 +1450,19 @@ canvas.addEventListener('mousedown', e => {
     else cancelPaste();                          // right-click cancels
     return;
   }
-  if (tool === 'dip' && e.button === 0) {
-    placeDip(p.x, p.y);
+  if (isComponentTool(tool) && e.button === 0) {
+    const f = fineAt(e);
+    placeComponent(tool, f.fx, f.fy);
     return;
   }
   if (tool === 'text' && e.button === 0) {
     placeText(p.x, p.y);
+    return;
+  }
+  if (tool === 'ftrace' && e.button === 0) {  // narrow fine trace: fine-node to fine-node
+    const f = fineAt(e);
+    drag = { start: f, end: f, tool: 'ftrace', button: 0, fine: true };
+    draw();
     return;
   }
   drag = { start: p, end: p, tool: e.button === 2 ? 'erase' : tool, button: e.button };
@@ -1166,23 +1471,25 @@ canvas.addEventListener('mousedown', e => {
 
 canvas.addEventListener('mouseleave', () => {
   hover = null;
+  hoverFine = null;
   draw();
 });
 
 window.addEventListener('mousemove', e => {
   if (drag) {
-    drag.end = cellAt(e);
+    drag.end = drag.fine ? fineAt(e) : cellAt(e);
     draw();
   } else if (e.target === canvas) {
     hover = cellAt(e);
+    hoverFine = fineAt(e);
     draw();
   }
   if (e.target === canvas) {
     const p = cellAt(e);
     if (inBounds(p.x, p.y)) {
-      const mmX = (p.x * MM_CELL).toFixed(1);
-      const mmY = (p.y * MM_CELL).toFixed(1);
-      info.textContent = `cell (${p.x}, ${p.y})  ·  ${mmX} × ${mmY} mm  ·  board ${(cols*MM_CELL).toFixed(1)} × ${(rows*MM_CELL).toFixed(1)} mm`;
+      const mmX = (p.x * mmCell).toFixed(1);
+      const mmY = (p.y * mmCell).toFixed(1);
+      info.textContent = `cell (${p.x}, ${p.y})  ·  ${mmX} × ${mmY} mm  ·  board ${(cols*mmCell).toFixed(1)} × ${(rows*mmCell).toFixed(1)} mm`;
     }
   }
 });
@@ -1206,6 +1513,12 @@ window.addEventListener('mouseup', e => {
   if (targetTool === 'line') {
     const l = lineSegment(drag.start, drag.end);
     if (validLine(l)) { pushHistory(); lines.push(l); autosave(); }
+    drag = null; draw();
+    return;
+  }
+  if (targetTool === 'ftrace') {
+    const ft = ftraceSegment(drag.start, drag.end);
+    if (validFtrace(ft)) { pushHistory(); ftraces.push(ft); autosave(); }
     drag = null; draw();
     return;
   }
@@ -1256,12 +1569,24 @@ function erasePlan(planCells) {
       if (planSet.has(lc.x + ',' + lc.y)) { lineIndices.push(i); break; }
     }
   }
+  const componentIndices = [];
+  for (let i = 0; i < components.length; i++) {
+    for (const cc of componentCoarseCells(components[i])) {
+      if (planSet.has(cc.x + ',' + cc.y)) { componentIndices.push(i); break; }
+    }
+  }
+  const ftraceIndices = [];
+  for (let i = 0; i < ftraces.length; i++) {
+    for (const cc of ftraceCoarseCells(ftraces[i])) {
+      if (planSet.has(cc.x + ',' + cc.y)) { ftraceIndices.push(i); break; }
+    }
+  }
   let hasPad = false;
   for (const c of planCells) {
     if (inBounds(c.x, c.y) && isPadState(cells[c.y][c.x])) { hasPad = true; break; }
   }
-  const trigger = hasPad || textIndices.length > 0 ||
-                  borderIndices.length > 0 || lineIndices.length > 0;
+  const trigger = hasPad || textIndices.length > 0 || borderIndices.length > 0 ||
+                  lineIndices.length > 0 || componentIndices.length > 0 || ftraceIndices.length > 0;
   const cellChanges = [];
   for (const c of planCells) {
     if (!inBounds(c.x, c.y)) continue;
@@ -1272,7 +1597,7 @@ function erasePlan(planCells) {
       cellChanges.push({ x: c.x, y: c.y, newState: 'empty' });
     }
   }
-  return { cellChanges, textIndices, borderIndices, lineIndices };
+  return { cellChanges, textIndices, borderIndices, lineIndices, componentIndices, ftraceIndices };
 }
 
 function applyPlanToState(plan, target) {
@@ -1291,6 +1616,12 @@ function applyPlanToState(plan, target) {
     }
     for (let i = ep.lineIndices.length - 1; i >= 0; i--) {
       lines.splice(ep.lineIndices[i], 1);
+    }
+    for (let i = ep.componentIndices.length - 1; i >= 0; i--) {
+      components.splice(ep.componentIndices[i], 1);
+    }
+    for (let i = ep.ftraceIndices.length - 1; i >= 0; i--) {
+      ftraces.splice(ep.ftraceIndices[i], 1);
     }
     return;
   }
@@ -1324,18 +1655,6 @@ function applyPlanToState(plan, target) {
   }
 }
 
-function placeDip(ox, oy) {
-  const holes = dipHoles(ox, oy);
-  for (const h of holes) {
-    if (!inBounds(h.x, h.y)) return; // refuse to place partially
-  }
-  pushHistory();
-  for (const h of holes) cells[h.y][h.x] = 'hole';
-  // DIP pins are isolated holes — no inter-hole links.
-  autosave();
-  draw();
-}
-
 // Click with the text tool: replace any existing text at the clicked cell;
 // an empty input just deletes whatever was there.
 function placeText(ox, oy) {
@@ -1355,24 +1674,30 @@ function placeText(ox, oy) {
 // --- undo / redo ---
 function snapshot() {
   return {
-    cols, rows,
+    cols, rows, pitch,
     cells: cells.map(row => row.slice()),
     links: [...links],
     texts: texts.map(t => ({...t})),
     borders: borders.map(b => ({...b})),
     lines: lines.map(l => ({...l})),
+    components: components.map(c => ({...c})),
+    ftraces: ftraces.map(t => ({...t})),
   };
 }
 
 function restoreSnapshot(s) {
   cols = s.cols; rows = s.rows;
+  applyPitch(s.pitch || 1);
   cells = s.cells.map(row => row.slice());
   links = new Set(s.links);
   texts = Array.isArray(s.texts) ? s.texts.map(t => ({...t})) : [];
   borders = Array.isArray(s.borders) ? s.borders.map(b => ({...b})) : [];
   lines = Array.isArray(s.lines) ? s.lines.map(l => ({...l})) : [];
+  components = Array.isArray(s.components) ? s.components.map(c => ({...c})) : [];
+  ftraces = Array.isArray(s.ftraces) ? s.ftraces.map(t => ({...t})) : [];
   document.getElementById('cols').value = cols;
   document.getElementById('rows').value = rows;
+  updatePitchButtons();
   setCanvasSize();
 }
 
@@ -1638,7 +1963,7 @@ function drawPasteGhost(offX, offY) {
         if (lset.has('h:' + (cx - 1) + ',' + cy)) ctx.fillRect(px, py + padOff, armLen, padSize);
         if (lset.has('h:' + cx + ',' + cy))       ctx.fillRect(px + padOff + padSize, py + padOff, armLen, padSize);
         if (st === 'hole') {
-          const hSize = cellPx * HOLE_FRAC, hOff = (cellPx - hSize) / 2;
+          const hSize = cellPx * holeFrac(), hOff = (cellPx - hSize) / 2;
           ctx.fillStyle = COLOR_HOLE;
           ctx.fillRect(px + hOff, py + hOff, hSize, hSize);
         }
@@ -1662,11 +1987,13 @@ document.getElementById('pasteBtn').addEventListener('click', startPaste);
 
 // --- persistence ---
 function serialize() {
-  return { version: 4, cols, rows, cellMm: MM_CELL, cells, links: [...links], texts, borders, lines };
+  return { version: 5, cols, rows, pitch, cellMm: mmCell, fineMm: MM_FINE,
+           cells, links: [...links], texts, borders, lines, components, ftraces };
 }
 function deserialize(data) {
   if (!data || !Array.isArray(data.cells)) throw new Error('Invalid file');
   cols = data.cols; rows = data.rows;
+  applyPitch(data.pitch || 1);   // files before v5 had no pitch → classic 2.54 mm
   cells = data.cells.map(row => row.slice());
   if (Array.isArray(data.links)) {
     links = new Set(data.links);
@@ -1691,9 +2018,16 @@ function deserialize(data) {
   lines = Array.isArray(data.lines)
     ? data.lines.filter(l => inBounds(l.x1, l.y1) && inBounds(l.x2, l.y2)).map(l => ({...l}))
     : [];
+  components = Array.isArray(data.components)
+    ? data.components.map(c => ({...c})).filter(componentInBounds)
+    : [];
+  ftraces = Array.isArray(data.ftraces)
+    ? data.ftraces.filter(t => inBoundsFine(t.fx1, t.fy1) && inBoundsFine(t.fx2, t.fy2)).map(t => ({...t}))
+    : [];
   selection = null; updateClipboardButtons();
   document.getElementById('cols').value = cols;
   document.getElementById('rows').value = rows;
+  updatePitchButtons();
   setCanvasSize(); draw();
 }
 
@@ -1738,7 +2072,7 @@ function restoreAutosave() {
 //
 // Builds a print-only layout (#printArea, shown only by the @media print rules)
 // holding three views and calls window.print(). True size is achieved by sizing
-// each canvas in physical mm via CSS: one cell = MM_CELL mm, so the printer
+// each canvas in physical mm via CSS: one cell = mmCell mm, so the printer
 // renders it 1:1 (provided the user prints at 100%, not "fit to page").
 //
 //   top-left  : bottom side — traces + holes, mirrored (it's the underside)
@@ -1772,7 +2106,7 @@ function drawPrintGrid(g, px) {
 // Holes are drilled through every side, so they are always drawn, last/on top.
 function renderPrintBoard(g, px, opts) {
   const { mode, copper, marks, mirror } = opts;
-  const k = px / MM_CELL;
+  const k = px / mmCell;
   const W = cols * px, H = rows * px;
   const ink = mode === 'ui' ? null : '#000000';
 
@@ -1847,10 +2181,34 @@ function renderPrintBoard(g, px, opts) {
         g.fillRect(p.cxMm * k - pxSize / 2, p.cyMm * k - pxSize / 2, drawSize, drawSize);
   }
 
+  // Fine breakout traces (copper) — only on the copper side / overview. Each is
+  // the convex hull of two squares centered on its end cells (square corners).
+  if (copper && ftraces.length) {
+    g.fillStyle = mode === 'ui' ? COLOR_TRACE : '#000000';
+    const half = Math.max(1, FINE_TRACE_W * k) / 2;
+    for (const t of ftraces)
+      fillSquareHull(g, (t.fx1 + 0.5) * MM_FINE * k, (t.fy1 + 0.5) * MM_FINE * k,
+                        (t.fx2 + 0.5) * MM_FINE * k, (t.fy2 + 0.5) * MM_FINE * k, half);
+  }
+  // Components: support-board footprint + fine pin holes.
+  for (const c of components) {
+    const s = componentSupport(c);
+    const bx = s.fx0 * MM_FINE * k, by = s.fy0 * MM_FINE * k;
+    const bw = (s.fx1 - s.fx0 + 1) * MM_FINE * k, bh = (s.fy1 - s.fy0 + 1) * MM_FINE * k;
+    if (mode === 'ui') { g.fillStyle = COLOR_BOARD; g.fillRect(bx, by, bw, bh); }
+    else { g.strokeStyle = '#9a9a9a'; g.lineWidth = Math.max(1, 0.12 * k); g.strokeRect(bx, by, bw, bh); }
+    const hs = MM_HOLE * k;
+    g.fillStyle = mode === 'ui' ? COLOR_HOLE : '#000000';
+    for (const p of componentPins(c)) {
+      const cx = (p.fx + 0.5) * MM_FINE * k, cy = (p.fy + 0.5) * MM_FINE * k;
+      g.fillRect(cx - hs / 2, cy - hs / 2, hs, hs);
+    }
+  }
+
   // Line art: holes punch white through the black copper (bottom side) so the
   // drill point is visible, but stay black on the bare white top side.
   const holeCol = mode === 'ui' ? COLOR_HOLE : (copper ? '#ffffff' : '#000000');
-  const hSize = px * HOLE_FRAC, hOff = (px - hSize) / 2;
+  const hSize = px * holeFrac(), hOff = (px - hSize) / 2;
   g.fillStyle = holeCol;
   for (let y = 0; y < rows; y++)
     for (let x = 0; x < cols; x++)
@@ -1871,8 +2229,8 @@ function printBoard() {
     c.width = cols * internalPx;
     c.height = rows * internalPx;
     renderPrintBoard(c.getContext('2d'), internalPx, opts);
-    c.style.width  = (cols * MM_CELL * scale) + 'mm';
-    c.style.height = (rows * MM_CELL * scale) + 'mm';
+    c.style.width  = (cols * mmCell * scale) + 'mm';
+    c.style.height = (rows * mmCell * scale) + 'mm';
     const fig = document.createElement('figure');
     const cap = document.createElement('figcaption');
     cap.textContent = caption;
@@ -1881,7 +2239,7 @@ function printBoard() {
     return fig;
   };
 
-  const bw = (cols * MM_CELL).toFixed(1), bh = (rows * MM_CELL).toFixed(1);
+  const bw = (cols * mmCell).toFixed(1), bh = (rows * mmCell).toFixed(1);
   const header = document.createElement('div');
   header.className = 'print-header';
   header.textContent = `PCB — ${cols} × ${rows} cells · ${bw} × ${bh} mm · ` +
@@ -1958,7 +2316,7 @@ function exportScad() {
   // live in the same white layer (part 2) and are subtracted from the base
   // (part 3). Axis-aligned bits (text, borders) are emitted as boxes [x,y,w,h];
   // free lines are emitted as segments [x1,y1,x2,y2] (rotated rect in SCAD).
-  const yMaxMm = rows * MM_CELL;
+  const yMaxMm = rows * mmCell;
   const whiteBoxes = [];
   const whiteLines = [];
   const pushBox = r => {
@@ -1974,9 +2332,27 @@ function exportScad() {
     for (const r of borderRectsDesign(b)) pushBox(r);
   }
   for (const l of lines) {
-    const ax = (l.x1 + 0.5) * MM_CELL, ay = yMaxMm - (l.y1 + 0.5) * MM_CELL;
-    const bx = (l.x2 + 0.5) * MM_CELL, by = yMaxMm - (l.y2 + 0.5) * MM_CELL;
+    const ax = (l.x1 + 0.5) * mmCell, ay = yMaxMm - (l.y1 + 0.5) * mmCell;
+    const bx = (l.x2 + 0.5) * mmCell, by = yMaxMm - (l.y2 + 0.5) * mmCell;
     whiteLines.push([ax, ay, bx, by]);
+  }
+
+  // Component geometry (fine 2.54 mm pitch), in SCAD coords (+Y up). Pin holes
+  // are drilled squares; each component contributes a support-board footprint;
+  // fine traces are narrow copper grooves at trace level.
+  const compHoles  = []; // [xc, yc]            hole centers (mm)
+  const compBoards = []; // [x, y, w, h]        support board, lower-left (mm)
+  const fineTraces = []; // [x1, y1, x2, y2]    narrow copper grooves (mm)
+  const fineCenter = (fx, fy) => [(fx + 0.5) * MM_FINE, yMaxMm - (fy + 0.5) * MM_FINE];
+  for (const c of components) {
+    for (const p of componentPins(c)) compHoles.push(fineCenter(p.fx, p.fy));
+    const s = componentSupport(c);
+    const x = s.fx0 * MM_FINE, w = (s.fx1 - s.fx0 + 1) * MM_FINE, h = (s.fy1 - s.fy0 + 1) * MM_FINE;
+    compBoards.push([x, yMaxMm - (s.fy1 + 1) * MM_FINE, w, h]); // lower-left
+  }
+  for (const t of ftraces) {
+    const a = fineCenter(t.fx1, t.fy1), b = fineCenter(t.fx2, t.fy2);
+    fineTraces.push([a[0], a[1], b[0], b[1]]);
   }
 
   // Z-axis is the finished-board orientation: the user looks at the board
@@ -2000,8 +2376,8 @@ function exportScad() {
   const holeZ1       = baseZ1;          // 1.4
 
   out.push('// PCB design — generated by PCB Designer');
-  out.push(`// grid: ${cols} x ${rows} cells, cell = ${MM_CELL} mm`);
-  out.push(`// board size: ${f(cols*MM_CELL)} x ${f(rows*MM_CELL)} x ${f(tranZ1)} mm`);
+  out.push(`// grid: ${cols} x ${rows} cells, cell = ${mmCell} mm`);
+  out.push(`// board size: ${f(cols*mmCell)} x ${f(rows*mmCell)} x ${f(tranZ1)} mm`);
   out.push('//');
   out.push('// Z-axis matches the finished board: +Z is the side you look at.');
   out.push(`//   ${f(tranZ0)} – ${f(tranZ1)}  transparent slab (part 1, no holes, no marks)`);
@@ -2019,7 +2395,7 @@ function exportScad() {
   out.push('');
   out.push('part = "all";   // "all" | "p1" (transparent) | "p2" (white marks) | "p3" (heat-resistant)');
   out.push('');
-  out.push(`cell           = ${MM_CELL};`);
+  out.push(`cell           = ${mmCell};`);
   out.push(`transparent_h  = ${transparentH};`);
   out.push(`base_z0        = ${f(baseZ0)};`);
   out.push(`base_z1        = ${f(baseZ1)};`);
@@ -2031,13 +2407,15 @@ function exportScad() {
   out.push(`text_z1        = ${f(textZ1)};`);
   out.push(`hole_z0        = ${f(holeZ0)};`);
   out.push(`hole_z1        = ${f(holeZ1)};`);
-  out.push(`trace_w        = ${MM_TRACE_W};`);
+  out.push(`trace_w        = ${mmTraceW};`);
+  out.push(`fine_w         = ${FINE_TRACE_W};`);
   out.push(`hole_w         = ${MM_HOLE};`);
   out.push(`line_w         = ${MM_PIXEL};`);
   out.push('eps            = 0.01;');
   out.push('');
 
-  if (baseCells.length === 0 && whiteBoxes.length === 0 && whiteLines.length === 0) {
+  if (baseCells.length === 0 && whiteBoxes.length === 0 && whiteLines.length === 0 &&
+      compBoards.length === 0 && fineTraces.length === 0) {
     out.push('// (empty design)');
     downloadText(out.join('\n'), 'pcb.scad');
     return;
@@ -2086,6 +2464,23 @@ function exportScad() {
   out.push('      translate([0, -line_w/2, 0])');
   out.push('        cube([norm(d), line_w, text_z1 - text_z0]);');
   out.push('}');
+  out.push('module comp_hole(p) {  // [xc, yc] — drilled component pin hole (2.54 mm pitch)');
+  out.push('  translate([p[0] - hole_w/2, p[1] - hole_w/2, hole_z0 - eps])');
+  out.push('    cube([hole_w, hole_w, hole_z1 - hole_z0 + 2*eps]);');
+  out.push('}');
+  out.push('module comp_base(b) {  // [x, y, w, h] — component support board (base layer)');
+  out.push('  translate([b[0], b[1], base_z0]) cube([b[2], b[3], base_z1 - base_z0]);');
+  out.push('}');
+  out.push('module comp_tran(b) {  // [x, y, w, h] — component support (transparent layer)');
+  out.push('  translate([b[0], b[1], tran_z0]) cube([b[2], b[3], tran_z1 - tran_z0]);');
+  out.push('}');
+  out.push('module fine_pad(x, y) {  // square groove cap centered on a fine cell');
+  out.push('  translate([x - fine_w/2, y - fine_w/2, trace_z0])');
+  out.push('    cube([fine_w, fine_w, trace_z1 - trace_z0]);');
+  out.push('}');
+  out.push('module fine_trace(s) {  // [x1, y1, x2, y2] — hull of two square end caps');
+  out.push('  hull() { fine_pad(s[0], s[1]); fine_pad(s[2], s[3]); }');
+  out.push('}');
   out.push('');
 
   const fmtNum = v => typeof v === 'number' ? f(v) : v;
@@ -2097,9 +2492,13 @@ function exportScad() {
   out.push('hole_cells  = ' + arr(holeCells)  + ';');
   out.push('white_boxes = ' + arr(whiteBoxes) + ';');
   out.push('white_lines = ' + arr(whiteLines) + ';');
+  out.push('comp_holes  = ' + arr(compHoles)  + ';');
+  out.push('comp_boards = ' + arr(compBoards) + ';');
+  out.push('fine_traces = ' + arr(fineTraces) + ';');
   out.push('');
   out.push('module part_transparent() {');
-  out.push('  for (p = base_cells) transparent_slab(p);');
+  out.push('  for (p = base_cells)  transparent_slab(p);');
+  out.push('  for (b = comp_boards) comp_tran(b);');
   out.push('}');
   out.push('module part_white() {');
   out.push('  difference() {');
@@ -2108,17 +2507,21 @@ function exportScad() {
   out.push('      for (s = white_lines) white_line(s);');
   out.push('    }');
   out.push('    for (p = hole_cells) hole_cut(p);  // holes drill through white marks too');
+  out.push('    for (p = comp_holes) comp_hole(p);');
   out.push('  }');
   out.push('}');
   out.push('module part_heat_resistant() {');
   out.push('  difference() {');
   out.push('    union() {');
-  out.push('      for (p = base_cells) board_base(p);');
-  out.push('      for (p = pads)       pad(p);');
-  out.push('      for (p = conn_e)     conn_east(p);');
-  out.push('      for (p = conn_s)     conn_south(p);');
+  out.push('      for (p = base_cells)  board_base(p);');
+  out.push('      for (b = comp_boards) comp_base(b);');
+  out.push('      for (p = pads)        pad(p);');
+  out.push('      for (p = conn_e)      conn_east(p);');
+  out.push('      for (p = conn_s)      conn_south(p);');
+  out.push('      for (s = fine_traces) fine_trace(s);  // narrow breakout grooves');
   out.push('    }');
   out.push('    for (p = hole_cells)  hole_cut(p);');
+  out.push('    for (p = comp_holes)  comp_hole(p);');
   out.push('    for (b = white_boxes) white_box(b);');
   out.push('    for (s = white_lines) white_line(s);');
   out.push('  }');
@@ -2144,6 +2547,7 @@ setCanvasSize();
 restoreAutosave();
 selectTool(tool);
 updateClipboardButtons();
+updatePitchButtons();
 </script>
 </body>
 </html>
