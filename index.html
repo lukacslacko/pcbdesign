@@ -1762,6 +1762,21 @@ document.getElementById('redoBtn').addEventListener('click', redo);
 
 const LINK_RE = /^([hv]):(\d+),(\d+)$/;
 
+// A coarse selection covers fine cells [x0*pitch .. (x1+1)*pitch-1] and the
+// matching half-fine node range. Fine objects are captured/cut only when wholly
+// inside, and stored relative to the selection's fine / half-fine origin.
+function componentInSel(c, sel) {
+  const s = componentSupport(c);
+  return s.fx0 >= sel.x0 * pitch && s.fy0 >= sel.y0 * pitch &&
+         s.fx1 <= (sel.x1 + 1) * pitch - 1 && s.fy1 <= (sel.y1 + 1) * pitch - 1;
+}
+function ftraceInSel(t, sel) {
+  const ux0 = sel.x0 * 2 * pitch, uy0 = sel.y0 * 2 * pitch;
+  const ux1 = (sel.x1 + 1) * 2 * pitch, uy1 = (sel.y1 + 1) * 2 * pitch;
+  return t.hx1 >= ux0 && t.hx1 <= ux1 && t.hy1 >= uy0 && t.hy1 <= uy1 &&
+         t.hx2 >= ux0 && t.hx2 <= ux1 && t.hy2 >= uy0 && t.hy2 <= uy1;
+}
+
 function captureSelection(sel) {
   const { x0, y0, x1, y1 } = sel;
   const w = x1 - x0 + 1, h = y1 - y0 + 1;
@@ -1794,8 +1809,17 @@ function captureSelection(sel) {
   const cLines = lines
     .filter(l => inRect(l.x1, l.y1) && inRect(l.x2, l.y2))
     .map(l => ({ x1: l.x1 - x0, y1: l.y1 - y0, x2: l.x2 - x0, y2: l.y2 - y0 }));
+  // Fine objects, relative to the selection's fine / half-fine origin.
+  const ffx0 = x0 * pitch, ffy0 = y0 * pitch, uhx0 = x0 * 2 * pitch, uhy0 = y0 * 2 * pitch;
+  const cComponents = components
+    .filter(c => componentInSel(c, sel))
+    .map(c => ({ ...c, fx: c.fx - ffx0, fy: c.fy - ffy0 }));
+  const cFtraces = ftraces
+    .filter(t => ftraceInSel(t, sel))
+    .map(t => ({ hx1: t.hx1 - uhx0, hy1: t.hy1 - uhy0, hx2: t.hx2 - uhx0, hy2: t.hy2 - uhy0 }));
 
-  return { w, h, cells: cCells, links: cLinks, texts: cTexts, borders: cBorders, lines: cLines };
+  return { w, h, pitch, cells: cCells, links: cLinks, texts: cTexts, borders: cBorders,
+           lines: cLines, components: cComponents, ftraces: cFtraces };
 }
 
 function doCopy() {
@@ -1821,6 +1845,8 @@ function doCut() {
   texts   = texts.filter(t => !textCells(t).every(c => inRect(c.x, c.y)));
   borders = borders.filter(b => !(b.x0 >= x0 && b.y0 >= y0 && b.x1 <= x1 && b.y1 <= y1));
   lines   = lines.filter(l => !(inRect(l.x1, l.y1) && inRect(l.x2, l.y2)));
+  components = components.filter(c => !componentInSel(c, selection));
+  ftraces    = ftraces.filter(t => !ftraceInSel(t, selection));
   updateClipboardButtons();
   autosave();
   draw();
@@ -1858,7 +1884,20 @@ function rotateClip(clip) {
     const a = R(l.x1, l.y1), b = R(l.x2, l.y2);
     return { x1: a.x, y1: a.y, x2: b.x, y2: b.y };
   });
-  return { w: H, h: W, cells, links, texts, borders, lines };
+  // Fine objects rotate at fine / half-fine resolution (same 90° CW), consistent
+  // with the coarse cell map. Component bodies also advance their own rotation.
+  const P = clip.pitch || pitch;
+  const Rf = (fx, fy) => ({ fx: H * P - 1 - fy, fy: fx });
+  const Ru = (hx, hy) => ({ hx: H * 2 * P - hy, hy: hx });
+  const components = (clip.components || []).map(c => {
+    const p = Rf(c.fx, c.fy);
+    return { ...c, fx: p.fx, fy: p.fy, rot: (c.rot + 90) % 360 };
+  });
+  const ftraces = (clip.ftraces || []).map(t => {
+    const a = Ru(t.hx1, t.hy1), b = Ru(t.hx2, t.hy2);
+    return { hx1: a.hx, hy1: a.hy, hx2: b.hx, hy2: b.hy };
+  });
+  return { w: H, h: W, pitch: P, cells, links, texts, borders, lines, components, ftraces };
 }
 
 function startPaste() {
@@ -1923,6 +1962,19 @@ function commitPaste(offX, offY) {
   for (const l of clip.lines) {
     const nl = { x1: l.x1 + offX, y1: l.y1 + offY, x2: l.x2 + offX, y2: l.y2 + offY };
     if (inBounds(nl.x1, nl.y1) && inBounds(nl.x2, nl.y2)) lines.push(nl);
+  }
+  // Fine objects paste at the same fine / half-fine offset (coarse offset scaled).
+  // They are tied to the coarse grid via pitch, so only when the pitch matches.
+  if ((clip.pitch || pitch) === pitch) {
+    const ffx = offX * pitch, ffy = offY * pitch, uhx = offX * 2 * pitch, uhy = offY * 2 * pitch;
+    for (const c of clip.components || []) {
+      const nc = { ...c, fx: c.fx + ffx, fy: c.fy + ffy };
+      if (componentInBounds(nc) && !componentOverlaps(nc)) components.push(nc);
+    }
+    for (const t of clip.ftraces || []) {
+      const nt = { hx1: t.hx1 + uhx, hy1: t.hy1 + uhy, hx2: t.hx2 + uhx, hy2: t.hy2 + uhy };
+      if (inBoundsUltra(nt.hx1, nt.hy1) && inBoundsUltra(nt.hx2, nt.hy2)) ftraces.push(nt);
+    }
   }
   autosave();
   draw();
@@ -1994,6 +2046,17 @@ function drawPasteGhost(offX, offY) {
       fillRectDesignMm(r);
   for (const l of clip.lines)
     strokeLineSegment({ x1: l.x1 + offX, y1: l.y1 + offY, x2: l.x2 + offX, y2: l.y2 + offY }, null);
+  // Fine objects (only when the captured pitch matches the board's).
+  if ((clip.pitch || pitch) === pitch) {
+    const ffx = offX * pitch, ffy = offY * pitch, uhx = offX * 2 * pitch, uhy = offY * 2 * pitch;
+    for (const t of clip.ftraces || [])
+      strokeFtrace({ hx1: t.hx1 + uhx, hy1: t.hy1 + uhy, hx2: t.hx2 + uhx, hy2: t.hy2 + uhy }, null);
+    for (const c of clip.components || []) {
+      const nc = { ...c, fx: c.fx + ffx, fy: c.fy + ffy };
+      drawComponent(nc, false);
+      drawComponentPins(nc);
+    }
+  }
   ctx.restore();
   dashedCellRect(offX, offY, offX + clip.w - 1, offY + clip.h - 1);
 }
