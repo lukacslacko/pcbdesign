@@ -294,7 +294,8 @@ let tool = 'board';
 let cellPx = 28;
 let drag = null;       // { start:{x,y}, end:{x,y}, tool, button, fine? }
 let hover = null;      // {x,y}     coarse cell under cursor
-let hoverFine = null;  // {fx,fy}   fine cell under cursor (component / fine-trace tools)
+let hoverFine = null;  // {fx,fy}   fine cell under cursor (component tools)
+let hoverUltra = null; // {hx,hy}   half-fine lattice node under cursor (fine-trace tool)
 
 // Selection + clipboard (cut / copy / paste). The clipboard is in-app only
 // (a JS object), not the system clipboard, and lives for the session.
@@ -542,7 +543,7 @@ function setBoardPitch(p) {
   applyPitch(p);
   // Fine geometry must stay inside the rescaled fine grid (cols*pitch × rows*pitch).
   components = components.filter(componentInBounds);
-  ftraces = ftraces.filter(t => inBoundsFine(t.fx1, t.fy1) && inBoundsFine(t.fx2, t.fy2));
+  ftraces = ftraces.filter(t => inBoundsUltra(t.hx1, t.hy1) && inBoundsUltra(t.hx2, t.hy2));
   updatePitchButtons();
   autosave();
   draw();
@@ -628,7 +629,7 @@ function resizeGrid(c, r) {
   borders = borders.filter(b => b.x0 >= 0 && b.y0 >= 0 && b.x1 < cols && b.y1 < rows);
   lines = lines.filter(l => inBounds(l.x1, l.y1) && inBounds(l.x2, l.y2));
   components = components.filter(componentInBounds);
-  ftraces = ftraces.filter(t => inBoundsFine(t.fx1, t.fy1) && inBoundsFine(t.fx2, t.fy2));
+  ftraces = ftraces.filter(t => inBoundsUltra(t.hx1, t.hy1) && inBoundsUltra(t.hx2, t.hy2));
   selection = null; updateClipboardButtons();
   document.getElementById('cols').value = cols;
   document.getElementById('rows').value = rows;
@@ -865,11 +866,11 @@ function draw() {
   if (!drag && !pasting && hover) {
     if (isComponentTool(tool) && hoverFine) drawComponentPreview(componentFromTool(tool, hoverFine.fx, hoverFine.fy));
     else if (tool === 'text') drawTextPreview(hover.x, hover.y);
-    else if (tool === 'ftrace' && hoverFine) {
-      const fp = cellPx / pitch;
-      ctx.strokeStyle = '#2a90ff'; ctx.lineWidth = 1.5; ctx.setLineDash([3, 2]);
-      ctx.strokeRect(hoverFine.fx * fp + 0.5, hoverFine.fy * fp + 0.5, fp - 1, fp - 1);
-      ctx.setLineDash([]);
+    else if (tool === 'ftrace' && hoverUltra) {
+      // marker at the snapped ultrafine node = where the trace would end
+      const up = ultraPx(), half = FINE_TRACE_W * (cellPx / pitch / MM_FINE) / 2;
+      ctx.strokeStyle = '#2a90ff'; ctx.lineWidth = 1.5;
+      ctx.strokeRect(hoverUltra.hx * up - half, hoverUltra.hy * up - half, 2 * half, 2 * half);
     }
     else if (tool === 'erase' && inBounds(hover.x, hover.y)) {
       ctx.fillStyle = 'rgba(220, 50, 50, 0.3)';
@@ -1359,19 +1360,21 @@ function lineCells(l) {
 }
 
 // --- fine (narrow) trace geometry ---
-function ftraceSegment(s, e) { return { fx1: s.fx, fy1: s.fy, fx2: e.fx, fy2: e.fy }; }
+// Fine traces store endpoints on the half-fine ("ultrafine") lattice: hx/hy in
+// units of MM_FINE/2 (mm = hx*MM_FINE/2). Width is still FINE_TRACE_W.
+function ftraceSegment(s, e) { return { hx1: s.hx, hy1: s.hy, hx2: e.hx, hy2: e.hy }; }
 function validFtrace(t) {
-  return inBoundsFine(t.fx1, t.fy1) && inBoundsFine(t.fx2, t.fy2) &&
-         !(t.fx1 === t.fx2 && t.fy1 === t.fy2);
+  return inBoundsUltra(t.hx1, t.hy1) && inBoundsUltra(t.hx2, t.hy2) &&
+         !(t.hx1 === t.hx2 && t.hy1 === t.hy2);
 }
-// Fine cells a fine trace passes through (coarse-cell mapped) — used by erase.
+// Coarse cells a fine trace passes through — used by erase.
 function ftraceCoarseCells(t) {
   const out = [], seen = new Set();
-  const steps = Math.max(1, Math.ceil(Math.hypot(t.fx2 - t.fx1, t.fy2 - t.fy1) * 4));
+  const steps = Math.max(1, Math.ceil(Math.hypot(t.hx2 - t.hx1, t.hy2 - t.hy1) * 2));
   for (let i = 0; i <= steps; i++) {
     const u = i / steps;
-    const fx = t.fx1 + (t.fx2 - t.fx1) * u, fy = t.fy1 + (t.fy2 - t.fy1) * u;
-    const cx = Math.floor(fx / pitch), cy = Math.floor(fy / pitch);
+    const hx = t.hx1 + (t.hx2 - t.hx1) * u, hy = t.hy1 + (t.hy2 - t.hy1) * u;
+    const cx = Math.floor(hx / (2 * pitch)), cy = Math.floor(hy / (2 * pitch));
     const k = cx + ',' + cy;
     if (!seen.has(k)) { seen.add(k); out.push({ x: cx, y: cy }); }
   }
@@ -1411,12 +1414,12 @@ function fillSquareHull(g, ax, ay, bx, by, half) {
 }
 
 function strokeFtrace(t, alpha) {
-  const fp = cellPx / pitch;
-  const half = Math.max(1, FINE_TRACE_W * (fp / MM_FINE)) / 2;
+  const up = ultraPx();
+  const half = Math.max(1, FINE_TRACE_W * (cellPx / pitch / MM_FINE)) / 2;
   ctx.save();
   if (alpha != null) ctx.globalAlpha = alpha;
   ctx.fillStyle = COLOR_TRACE;
-  fillSquareHull(ctx, (t.fx1 + 0.5) * fp, (t.fy1 + 0.5) * fp, (t.fx2 + 0.5) * fp, (t.fy2 + 0.5) * fp, half);
+  fillSquareHull(ctx, t.hx1 * up, t.hy1 * up, t.hx2 * up, t.hy2 * up, half);
   ctx.restore();
 }
 function drawFtraces() { for (const t of ftraces) strokeFtrace(t, null); }
@@ -1439,6 +1442,18 @@ function fineAt(e) {
 function inBoundsFine(fx, fy) { return fx >= 0 && fy >= 0 && fx < cols * pitch && fy < rows * pitch; }
 function isComponentTool(t) { return t === 'dip' || t === 'sil'; }
 
+// Half-fine ("ultrafine") lattice node nearest the cursor — fine-trace endpoints
+// snap here (spacing MM_FINE/2), so they can hit fine-cell centres (odd nodes),
+// coarse-cell centres (the middle of a coarse trace) and fine-cell edges alike.
+function ultraAt(e) {
+  const rect = canvas.getBoundingClientRect();
+  const up = cellPx / (2 * pitch);
+  return { hx: Math.round((e.clientX - rect.left) / up), hy: Math.round((e.clientY - rect.top) / up) };
+}
+function inBoundsUltra(hx, hy) { return hx >= 0 && hy >= 0 && hx <= 2 * cols * pitch && hy <= 2 * rows * pitch; }
+function ultraPx() { return cellPx / (2 * pitch); }   // px per ultrafine unit
+function ultraMm(h) { return h * MM_FINE / 2; }        // ultrafine unit -> mm
+
 canvas.addEventListener('contextmenu', e => e.preventDefault());
 
 canvas.addEventListener('mousedown', e => {
@@ -1459,9 +1474,9 @@ canvas.addEventListener('mousedown', e => {
     placeText(p.x, p.y);
     return;
   }
-  if (tool === 'ftrace' && e.button === 0) {  // narrow fine trace: fine-node to fine-node
-    const f = fineAt(e);
-    drag = { start: f, end: f, tool: 'ftrace', button: 0, fine: true };
+  if (tool === 'ftrace' && e.button === 0) {  // narrow fine trace: ultrafine node to node
+    const u = ultraAt(e);
+    drag = { start: u, end: u, tool: 'ftrace', button: 0, ultra: true };
     draw();
     return;
   }
@@ -1472,16 +1487,18 @@ canvas.addEventListener('mousedown', e => {
 canvas.addEventListener('mouseleave', () => {
   hover = null;
   hoverFine = null;
+  hoverUltra = null;
   draw();
 });
 
 window.addEventListener('mousemove', e => {
   if (drag) {
-    drag.end = drag.fine ? fineAt(e) : cellAt(e);
+    drag.end = drag.ultra ? ultraAt(e) : cellAt(e);
     draw();
   } else if (e.target === canvas) {
     hover = cellAt(e);
     hoverFine = fineAt(e);
+    hoverUltra = ultraAt(e);
     draw();
   }
   if (e.target === canvas) {
@@ -1987,7 +2004,7 @@ document.getElementById('pasteBtn').addEventListener('click', startPaste);
 
 // --- persistence ---
 function serialize() {
-  return { version: 5, cols, rows, pitch, cellMm: mmCell, fineMm: MM_FINE,
+  return { version: 6, cols, rows, pitch, cellMm: mmCell, fineMm: MM_FINE,
            cells, links: [...links], texts, borders, lines, components, ftraces };
 }
 function deserialize(data) {
@@ -2022,7 +2039,11 @@ function deserialize(data) {
     ? data.components.map(c => ({...c})).filter(componentInBounds)
     : [];
   ftraces = Array.isArray(data.ftraces)
-    ? data.ftraces.filter(t => inBoundsFine(t.fx1, t.fy1) && inBoundsFine(t.fx2, t.fy2)).map(t => ({...t}))
+    ? data.ftraces
+        // v5 stored fine-cell centres (fx); v6+ stores half-fine nodes (hx = 2*fx+1).
+        .map(t => ('hx1' in t) ? { hx1: t.hx1, hy1: t.hy1, hx2: t.hx2, hy2: t.hy2 }
+                               : { hx1: 2 * t.fx1 + 1, hy1: 2 * t.fy1 + 1, hx2: 2 * t.fx2 + 1, hy2: 2 * t.fy2 + 1 })
+        .filter(t => inBoundsUltra(t.hx1, t.hy1) && inBoundsUltra(t.hx2, t.hy2))
     : [];
   selection = null; updateClipboardButtons();
   document.getElementById('cols').value = cols;
@@ -2187,8 +2208,8 @@ function renderPrintBoard(g, px, opts) {
     g.fillStyle = mode === 'ui' ? COLOR_TRACE : '#000000';
     const half = Math.max(1, FINE_TRACE_W * k) / 2;
     for (const t of ftraces)
-      fillSquareHull(g, (t.fx1 + 0.5) * MM_FINE * k, (t.fy1 + 0.5) * MM_FINE * k,
-                        (t.fx2 + 0.5) * MM_FINE * k, (t.fy2 + 0.5) * MM_FINE * k, half);
+      fillSquareHull(g, t.hx1 * (MM_FINE / 2) * k, t.hy1 * (MM_FINE / 2) * k,
+                        t.hx2 * (MM_FINE / 2) * k, t.hy2 * (MM_FINE / 2) * k, half);
   }
   // Components: support-board footprint + fine pin holes.
   for (const c of components) {
@@ -2350,8 +2371,9 @@ function exportScad() {
     const x = s.fx0 * MM_FINE, w = (s.fx1 - s.fx0 + 1) * MM_FINE, h = (s.fy1 - s.fy0 + 1) * MM_FINE;
     compBoards.push([x, yMaxMm - (s.fy1 + 1) * MM_FINE, w, h]); // lower-left
   }
+  const ultraCenter = (hx, hy) => [hx * MM_FINE / 2, yMaxMm - hy * MM_FINE / 2];
   for (const t of ftraces) {
-    const a = fineCenter(t.fx1, t.fy1), b = fineCenter(t.fx2, t.fy2);
+    const a = ultraCenter(t.hx1, t.hy1), b = ultraCenter(t.hx2, t.hy2);
     fineTraces.push([a[0], a[1], b[0], b[1]]);
   }
 
