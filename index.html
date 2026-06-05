@@ -89,6 +89,7 @@
       <button data-tool="dip"   title="DIP package (D)">DIP</button>
       <button data-tool="sil"   title="SIL / header — single in-line (I)">SIL</button>
       <button data-tool="ftrace" title="Fine trace — narrow breakout (F)">F-trace</button>
+      <button data-tool="ferase" title="Trim board outline — fine ½-cell eraser; right-drag restores (C)">Trim</button>
       <button data-tool="text"  title="Text label (X)">Text</button>
       <button data-tool="border" title="Border box (O)">Border</button>
       <button data-tool="line"  title="White line / jumper (L)">Line</button>
@@ -182,8 +183,9 @@
     <span class="swatch" style="margin-left:auto">Coarse cell = pitch × 2.54 mm · pins = 2.54 mm</span>
   </div>
   <div class="hint">
-    <kbd>E</kbd>/<kbd>B</kbd>/<kbd>T</kbd>/<kbd>S</kbd>/<kbd>H</kbd>/<kbd>D</kbd>/<kbd>I</kbd>/<kbd>F</kbd>/<kbd>X</kbd>/<kbd>O</kbd>/<kbd>L</kbd>/<kbd>M</kbd> pick tools.
+    <kbd>E</kbd>/<kbd>B</kbd>/<kbd>T</kbd>/<kbd>S</kbd>/<kbd>H</kbd>/<kbd>D</kbd>/<kbd>I</kbd>/<kbd>F</kbd>/<kbd>C</kbd>/<kbd>X</kbd>/<kbd>O</kbd>/<kbd>L</kbd>/<kbd>M</kbd> pick tools.
     Board / Erase / Border / Select = rectangle drag · Trace / Hole = axis-parallel line · Line/F-trace = free segment · Bus = parallel lines · DIP (D) / SIL (I) / Text = click to place · <kbd>R</kbd> rotates DIP/SIL/Text. Right-drag always erases. <kbd>⌘/Ctrl+Z</kbd> undo.
+    <b>Trim</b> (C) cuts the board outline at the fine (½-coarse-cell) level — drag a rectangle to pull an edge back under an offset SIL/DIP; right-drag restores.
     <b>Pitch</b>: 2.54 mm (classic) or 5.08 mm (double, 3.2 mm traces). DIP/SIL keep 2.54 mm pins inside the coarse grid; route them out with the F-trace tool (narrow copper, snaps to the 2.54 mm sub-grid). SIL <b>Edge</b> adds a support strip for 90° bent header pins.
     Select then <kbd>⌘/Ctrl+C</kbd>/<kbd>X</kbd>/<kbd>V</kbd> copy/cut/paste · <kbd>⌘/Ctrl+P</kbd> print true-size sides + overview.
   </div>
@@ -309,6 +311,10 @@ let lines = [];        // [{ x1, y1, x2, y2 }]    free center-to-center white li
 let components = [];   // [{ type:'dip'|'sil', fx, fy, pins, rot, width?, edge? }]
 // Fine (narrow) copper traces hand-routed on the fine lattice, free segments.
 let ftraces = [];      // [{ fx1, fy1, fx2, fy2 }]   center-to-center, FINE_TRACE_W wide
+// Fine-cell board trims (Trim tool): fine cells cut out of the coarse board
+// outline, so an edge can be pulled back to the half-coarse-cell that an offset
+// component needs. Keys are "fx,fy"; a cut only shows where a coarse cell exists.
+let cuts = new Set();
 let tool = 'board';
 let cellPx = 28;
 let drag = null;       // { start:{x,y}, end:{x,y}, tool, button, fine? }
@@ -319,7 +325,7 @@ let hoverUltra = null; // {hx,hy}   half-fine lattice node under cursor (fine-tr
 // Selection + clipboard (cut / copy / paste). The clipboard is in-app only
 // (a JS object), not the system clipboard, and lives for the session.
 let selection = null;  // { x0, y0, x1, y1 }  current marquee, or null
-let clipboard = null;  // captured fragment {w,h,cells,links,texts,borders,lines}, relative coords
+let clipboard = null;  // captured fragment {w,h,cells,links,texts,borders,lines,components,ftraces,cuts}
 let pasting = false;   // true while placing a paste (ghost follows the cursor)
 
 // Undo/redo stacks hold snapshots of (cols, rows, cells, links).
@@ -480,6 +486,7 @@ window.addEventListener('keydown', e => {
   else if (k === 'd') selectTool('dip');
   else if (k === 'i') selectTool('sil');
   else if (k === 'f') selectTool('ftrace');
+  else if (k === 'c') selectTool('ferase');
   else if (k === 'x') selectTool('text');
   else if (k === 'o') selectTool('border');
   else if (k === 'l') selectTool('line');
@@ -511,6 +518,7 @@ const TOOL_CURSORS = {
   select: cursorUrl(`<rect x='3' y='3' width='18' height='18' fill='none' stroke='#39d0ff' stroke-width='2' stroke-dasharray='3 2'/>`),
   sil:   cursorUrl(`<rect x='10' y='3' width='5' height='18' rx='1' fill='#333' stroke='#111' stroke-width='1'/><circle cx='12.5' cy='6' r='1.4' fill='#d4a017'/><circle cx='12.5' cy='11' r='1.4' fill='#d4a017'/><circle cx='12.5' cy='16' r='1.4' fill='#d4a017'/>`),
   ftrace: cursorUrl(`<rect x='3' y='3' width='18' height='18' fill='rgba(29,107,62,0.6)' stroke='#0e3a22' stroke-width='1'/><line x1='5' y1='19' x2='19' y2='5' stroke='#d4a017' stroke-width='1.5'/>`),
+  ferase: cursorUrl(`<rect x='7' y='7' width='10' height='10' fill='rgba(220,50,50,0.35)' stroke='#dc3232' stroke-width='2'/><line x1='9' y1='9' x2='15' y2='15' stroke='#dc3232' stroke-width='2'/><line x1='15' y1='9' x2='9' y2='15' stroke='#dc3232' stroke-width='2'/>`),
 };
 
 // DIP controls
@@ -563,6 +571,7 @@ function setBoardPitch(p) {
   // Fine geometry must stay inside the rescaled fine grid (cols*pitch × rows*pitch).
   components = components.filter(componentInBounds);
   ftraces = ftraces.filter(t => inBoundsUltra(t.hx1, t.hy1) && inBoundsUltra(t.hx2, t.hy2));
+  cuts = new Set([...cuts].filter(cutInBounds));
   updatePitchButtons();
   autosave();
   draw();
@@ -604,6 +613,7 @@ document.getElementById('newBtn').addEventListener('click', () => {
   lines = [];
   components = [];
   ftraces = [];
+  cuts = new Set();
   selection = null; updateClipboardButtons();
   autosave(); draw();
 });
@@ -695,6 +705,7 @@ function resizeGrid(c, r) {
   lines = lines.filter(l => inBounds(l.x1, l.y1) && inBounds(l.x2, l.y2));
   components = components.filter(componentInBounds);
   ftraces = ftraces.filter(t => inBoundsUltra(t.hx1, t.hy1) && inBoundsUltra(t.hx2, t.hy2));
+  cuts = new Set([...cuts].filter(cutInBounds));
   selection = null; updateClipboardButtons();
   document.getElementById('cols').value = cols;
   document.getElementById('rows').value = rows;
@@ -912,6 +923,8 @@ function draw() {
     for (let x = 0; x < cols; x++)
       drawCellShape(x, y, effectiveState(x, y));
 
+  if (cuts.size) drawCuts();   // pull the board edge back at the fine level
+
   components.forEach((c, i) => { if (!overrides.removeComponents.has(i)) drawComponent(c, false); });
   ftraces.forEach((t, i) => { if (!overrides.removeFtraces.has(i)) strokeFtrace(t, null); });
 
@@ -927,6 +940,7 @@ function draw() {
     else if (drag.tool === 'line') drawLinePreview(drag.start, drag.end);
     else if (drag.tool === 'select') drawSelectionPreview(drag.start, drag.end);
     else if (drag.tool === 'ftrace') drawFtracePreview(drag.start, drag.end);
+    else if (drag.tool === 'ferase') drawTrimPreview(drag.start, drag.end, drag.button === 2);
   }
   if (!drag && !pasting && hover) {
     if (isComponentTool(tool) && hoverFine) drawComponentPreview(componentFromTool(tool, hoverFine.fx, hoverFine.fy));
@@ -940,6 +954,11 @@ function draw() {
     else if (tool === 'erase' && inBounds(hover.x, hover.y)) {
       ctx.fillStyle = 'rgba(220, 50, 50, 0.3)';
       paintErasePreviewCells(erasePlan([hover]));
+    }
+    else if (tool === 'ferase' && hoverFine && inBoundsFine(hoverFine.fx, hoverFine.fy)) {
+      const fp = cellPx / pitch;
+      ctx.fillStyle = 'rgba(220, 50, 50, 0.3)';
+      ctx.fillRect(hoverFine.fx * fp, hoverFine.fy * fp, fp, fp);
     }
   }
 
@@ -1545,6 +1564,12 @@ canvas.addEventListener('mousedown', e => {
     draw();
     return;
   }
+  if (tool === 'ferase') {  // fine board trim: fine-grid rectangle; right-drag restores
+    const f = fineAt(e);
+    drag = { start: f, end: f, tool: 'ferase', button: e.button, fine: true };
+    draw();
+    return;
+  }
   drag = { start: p, end: p, tool: e.button === 2 ? 'erase' : tool, button: e.button };
   draw();
 });
@@ -1558,7 +1583,7 @@ canvas.addEventListener('mouseleave', () => {
 
 window.addEventListener('mousemove', e => {
   if (drag) {
-    drag.end = drag.ultra ? ultraAt(e) : cellAt(e);
+    drag.end = drag.ultra ? ultraAt(e) : drag.fine ? fineAt(e) : cellAt(e);
     draw();
   } else if (e.target === canvas) {
     hover = cellAt(e);
@@ -1601,6 +1626,11 @@ window.addEventListener('mouseup', e => {
   if (targetTool === 'ftrace') {
     const ft = ftraceSegment(drag.start, drag.end);
     if (validFtrace(ft)) { pushHistory(); ftraces.push(ft); autosave(); }
+    drag = null; draw();
+    return;
+  }
+  if (targetTool === 'ferase') {
+    applyTrim(drag.start, drag.end, drag.button === 2);  // right-drag restores board
     drag = null; draw();
     return;
   }
@@ -1737,6 +1767,58 @@ function applyPlanToState(plan, target) {
   }
 }
 
+// --- fine board trim (Trim tool) -------------------------------------------
+// The board outline is built from coarse cells, but an offset component (a SIL
+// header dropped on the half-coarse fine grid) leaves the edge half a coarse
+// cell too big. `cuts` holds fine cells removed from the board; a cut only has
+// an effect where a coarse cell exists. Left-drag trims; right-drag restores.
+function cutInBounds(key) {
+  const m = /^(\d+),(\d+)$/.exec(key);
+  return !!m && inBoundsFine(+m[1], +m[2]);
+}
+function coarseUnder(fx, fy) { return cells[Math.floor(fy / pitch)][Math.floor(fx / pitch)]; }
+function fineRectCells(s, e) {
+  const out = [];
+  const x0 = Math.min(s.fx, e.fx), x1 = Math.max(s.fx, e.fx);
+  const y0 = Math.min(s.fy, e.fy), y1 = Math.max(s.fy, e.fy);
+  for (let fy = y0; fy <= y1; fy++)
+    for (let fx = x0; fx <= x1; fx++)
+      if (inBoundsFine(fx, fy)) out.push({ fx, fy });
+  return out;
+}
+function applyTrim(s, e, restore) {
+  const changed = [];
+  for (const { fx, fy } of fineRectCells(s, e)) {
+    const key = fx + ',' + fy;
+    // Trim only where board material exists; skip no-ops so history stays clean.
+    if (restore ? cuts.has(key) : (!cuts.has(key) && coarseUnder(fx, fy) !== 'empty')) changed.push(key);
+  }
+  if (!changed.length) return;
+  pushHistory();
+  for (const key of changed) restore ? cuts.delete(key) : cuts.add(key);
+  autosave();
+}
+// Paint trimmed fine-cells back to the empty colour (a trim removes all material
+// in that quadrant, so it overdraws the board base and any copper there).
+function drawCuts() {
+  const fp = cellPx / pitch;
+  ctx.fillStyle = COLOR_EMPTY;
+  for (const key of cuts) {
+    const m = /^(\d+),(\d+)$/.exec(key);
+    if (!m) continue;
+    const fx = +m[1], fy = +m[2];
+    if (inBoundsFine(fx, fy) && coarseUnder(fx, fy) !== 'empty')
+      ctx.fillRect(fx * fp, fy * fp, fp, fp);
+  }
+}
+function drawTrimPreview(s, e, restore) {
+  const fp = cellPx / pitch;
+  ctx.save();
+  ctx.fillStyle = restore ? 'rgba(80, 200, 120, 0.45)' : 'rgba(220, 50, 50, 0.45)';
+  for (const { fx, fy } of fineRectCells(s, e)) ctx.fillRect(fx * fp, fy * fp, fp, fp);
+  ctx.restore();
+}
+
 // Click with the text tool: replace any existing text at the clicked cell;
 // an empty input just deletes whatever was there.
 function placeText(ox, oy) {
@@ -1764,6 +1846,7 @@ function snapshot() {
     lines: lines.map(l => ({...l})),
     components: components.map(c => ({...c})),
     ftraces: ftraces.map(t => ({...t})),
+    cuts: [...cuts],
   };
 }
 
@@ -1777,6 +1860,7 @@ function restoreSnapshot(s) {
   lines = Array.isArray(s.lines) ? s.lines.map(l => ({...l})) : [];
   components = Array.isArray(s.components) ? s.components.map(c => ({...c})) : [];
   ftraces = Array.isArray(s.ftraces) ? s.ftraces.map(t => ({...t})) : [];
+  cuts = new Set(Array.isArray(s.cuts) ? s.cuts : []);
   document.getElementById('cols').value = cols;
   document.getElementById('rows').value = rows;
   updatePitchButtons();
@@ -1882,9 +1966,15 @@ function captureSelection(sel) {
   const cFtraces = ftraces
     .filter(t => ftraceInSel(t, sel))
     .map(t => ({ hx1: t.hx1 - uhx0, hy1: t.hy1 - uhy0, hx2: t.hx2 - uhx0, hy2: t.hy2 - uhy0 }));
+  // Fine-cell trims inside the selection's fine extent, relative to its fine origin.
+  const fx1 = (x1 + 1) * pitch, fy1 = (y1 + 1) * pitch;
+  const cCuts = [...cuts].filter(k => {
+    const m = /^(\d+),(\d+)$/.exec(k);
+    return m && +m[1] >= ffx0 && +m[1] < fx1 && +m[2] >= ffy0 && +m[2] < fy1;
+  }).map(k => { const [fx, fy] = k.split(',').map(Number); return (fx - ffx0) + ',' + (fy - ffy0); });
 
   return { w, h, pitch, cells: cCells, links: cLinks, texts: cTexts, borders: cBorders,
-           lines: cLines, components: cComponents, ftraces: cFtraces };
+           lines: cLines, components: cComponents, ftraces: cFtraces, cuts: cCuts };
 }
 
 function doCopy() {
@@ -1912,6 +2002,12 @@ function doCut() {
   lines   = lines.filter(l => !(inRect(l.x1, l.y1) && inRect(l.x2, l.y2)));
   components = components.filter(c => !componentInSel(c, selection));
   ftraces    = ftraces.filter(t => !ftraceInSel(t, selection));
+  // Drop fine trims whose cell falls in the cleared rectangle.
+  const fx1 = (x1 + 1) * pitch, fy1 = (y1 + 1) * pitch;
+  cuts = new Set([...cuts].filter(k => {
+    const m = /^(\d+),(\d+)$/.exec(k);
+    return !(m && +m[1] >= x0 * pitch && +m[1] < fx1 && +m[2] >= y0 * pitch && +m[2] < fy1);
+  }));
   updateClipboardButtons();
   autosave();
   draw();
@@ -1962,7 +2058,12 @@ function rotateClip(clip) {
     const a = Ru(t.hx1, t.hy1), b = Ru(t.hx2, t.hy2);
     return { hx1: a.hx, hy1: a.hy, hx2: b.hx, hy2: b.hy };
   });
-  return { w: H, h: W, pitch: P, cells, links, texts, borders, lines, components, ftraces };
+  const cuts = (clip.cuts || []).map(k => {
+    const [fx, fy] = k.split(',').map(Number);
+    const p = Rf(fx, fy);
+    return p.fx + ',' + p.fy;
+  });
+  return { w: H, h: W, pitch: P, cells, links, texts, borders, lines, components, ftraces, cuts };
 }
 
 function startPaste() {
@@ -2039,6 +2140,11 @@ function commitPaste(offX, offY) {
     for (const t of clip.ftraces || []) {
       const nt = { hx1: t.hx1 + uhx, hy1: t.hy1 + uhy, hx2: t.hx2 + uhx, hy2: t.hy2 + uhy };
       if (inBoundsUltra(nt.hx1, nt.hy1) && inBoundsUltra(nt.hx2, nt.hy2)) ftraces.push(nt);
+    }
+    for (const k of clip.cuts || []) {
+      const [fx, fy] = k.split(',').map(Number);
+      const nfx = fx + ffx, nfy = fy + ffy;
+      if (inBoundsFine(nfx, nfy)) cuts.add(nfx + ',' + nfy);
     }
   }
   autosave();
@@ -2121,6 +2227,12 @@ function drawPasteGhost(offX, offY) {
       drawComponent(nc, false);
       drawComponentPins(nc);
     }
+    const fp = cellPx / pitch;
+    ctx.fillStyle = COLOR_EMPTY;
+    for (const k of clip.cuts || []) {
+      const [fx, fy] = k.split(',').map(Number);
+      ctx.fillRect((fx + ffx) * fp, (fy + ffy) * fp, fp, fp);  // ghost the trimmed edge
+    }
   }
   ctx.restore();
   dashedCellRect(offX, offY, offX + clip.w - 1, offY + clip.h - 1);
@@ -2132,8 +2244,9 @@ document.getElementById('pasteBtn').addEventListener('click', startPaste);
 
 // --- persistence ---
 function serialize() {
-  return { version: 6, cols, rows, pitch, cellMm: mmCell, fineMm: MM_FINE,
-           cells, links: [...links], texts, borders, lines, components, ftraces };
+  return { version: 7, cols, rows, pitch, cellMm: mmCell, fineMm: MM_FINE,
+           cells, links: [...links], texts, borders, lines, components, ftraces,
+           cuts: [...cuts] };
 }
 function deserialize(data) {
   if (!data || !Array.isArray(data.cells)) throw new Error('Invalid file');
@@ -2173,6 +2286,7 @@ function deserialize(data) {
                                : { hx1: 2 * t.fx1 + 1, hy1: 2 * t.fy1 + 1, hx2: 2 * t.fx2 + 1, hy2: 2 * t.fy2 + 1 })
         .filter(t => inBoundsUltra(t.hx1, t.hy1) && inBoundsUltra(t.hx2, t.hy2))
     : [];
+  cuts = new Set(Array.isArray(data.cuts) ? data.cuts.filter(cutInBounds) : []);
   selection = null; updateClipboardButtons();
   document.getElementById('cols').value = cols;
   document.getElementById('rows').value = rows;
@@ -2505,6 +2619,18 @@ function exportScad() {
     fineTraces.push([a[0], a[1], b[0], b[1]]);
   }
 
+  // Fine-cell board trims — subtracted from the board so an edge can be cut back
+  // below coarse-cell resolution. Each is a fine-cell square, lower-left in SCAD.
+  const boardCuts = []; // [x, y, w, h]
+  for (const key of cuts) {
+    const m = /^(\d+),(\d+)$/.exec(key);
+    if (!m) continue;
+    const cfx = +m[1], cfy = +m[2];
+    if (!inBoundsFine(cfx, cfy)) continue;
+    if (cells[Math.floor(cfy / pitch)][Math.floor(cfx / pitch)] === 'empty') continue; // a trim only bites where board exists (matches the canvas)
+    boardCuts.push([cfx * MM_FINE, yMaxMm - (cfy + 1) * MM_FINE, MM_FINE, MM_FINE]);
+  }
+
   // Z-axis is the finished-board orientation: the user looks at the board
   // from +Z and sees the transparent slab on top, with text labels just
   // below it, board base in the middle, and raised traces protruding from
@@ -2631,6 +2757,10 @@ function exportScad() {
   out.push('module fine_trace(s) {  // [x1, y1, x2, y2] — hull of two square end caps');
   out.push('  hull() { fine_pad(s[0], s[1]); fine_pad(s[2], s[3]); }');
   out.push('}');
+  out.push('module board_cut(b) {  // [x, y, w, h] — fine-cell trim, removes the full board height');
+  out.push('  translate([b[0], b[1], trace_z0 - eps])');
+  out.push('    cube([b[2], b[3], tran_z1 - trace_z0 + 2*eps]);');
+  out.push('}');
   out.push('');
 
   const fmtNum = v => typeof v === 'number' ? f(v) : v;
@@ -2645,10 +2775,16 @@ function exportScad() {
   out.push('comp_holes  = ' + arr(compHoles)  + ';');
   out.push('comp_boards = ' + arr(compBoards) + ';');
   out.push('fine_traces = ' + arr(fineTraces) + ';');
+  out.push('board_cuts  = ' + arr(boardCuts)  + ';');
   out.push('');
   out.push('module part_transparent() {');
-  out.push('  for (p = base_cells)  transparent_slab(p);');
-  out.push('  for (b = comp_boards) comp_tran(b);');
+  out.push('  difference() {');
+  out.push('    union() {');
+  out.push('      for (p = base_cells)  transparent_slab(p);');
+  out.push('      for (b = comp_boards) comp_tran(b);');
+  out.push('    }');
+  out.push('    for (b = board_cuts) board_cut(b);  // fine-level edge trims');
+  out.push('  }');
   out.push('}');
   out.push('module part_white() {');
   out.push('  difference() {');
@@ -2658,6 +2794,7 @@ function exportScad() {
   out.push('    }');
   out.push('    for (p = hole_cells) hole_cut(p);  // holes drill through white marks too');
   out.push('    for (p = comp_holes) comp_hole(p);');
+  out.push('    for (b = board_cuts) board_cut(b);  // marks in a trimmed area go too');
   out.push('  }');
   out.push('}');
   out.push('module part_heat_resistant() {');
@@ -2674,6 +2811,7 @@ function exportScad() {
   out.push('    for (p = comp_holes)  comp_hole(p);');
   out.push('    for (b = white_boxes) white_box(b);');
   out.push('    for (s = white_lines) white_line(s);');
+  out.push('    for (b = board_cuts) board_cut(b);  // fine-level edge trims');
   out.push('  }');
   out.push('}');
   out.push('');

@@ -21,6 +21,9 @@ Live app: <https://lukacslacko.github.io/pcbdesign/>
   - **Bus** (S) — N parallel axis-parallel lines; <kbd>1</kbd>–<kbd>9</kbd>/<kbd>0</kbd> set 1–10 lines
   - **Hole** (H) — axis-parallel line
   - **DIP** (D) — click to drop a DIP package; <kbd>4</kbd>/<kbd>8</kbd>/<kbd>0</kbd> set 8/16/20 pins, narrow/broad body, <kbd>R</kbd> rotates
+  - **Trim** (C) — fine ½-coarse-cell board eraser; rectangle drag pulls the
+    board outline back below coarse-cell resolution (e.g. to match a SIL/DIP
+    placed on the half-cell fine grid). Right-drag restores the cut material.
 - Right-drag always erases
 - Save/load `.json` and export `.scad`
 - **Pre-made** dropdown loads a built-in circuit (replaces the board, undoable)
