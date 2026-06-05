@@ -23,7 +23,23 @@ Live app: <https://lukacslacko.github.io/pcbdesign/>
   - **DIP** (D) — click to drop a DIP package; <kbd>4</kbd>/<kbd>8</kbd>/<kbd>0</kbd> set 8/16/20 pins, narrow/broad body, <kbd>R</kbd> rotates
 - Right-drag always erases
 - Save/load `.json` and export `.scad`
+- **Pre-made** dropdown loads a built-in circuit (replaces the board, undoable)
 - Designs autosave to `localStorage`
+
+## Pre-made circuits
+
+The **Pre-made** dropdown in the toolbar loads ready-made designs. Each one
+lives as a `.json` file in [`circuits/`](circuits/) and is embedded into
+`index.html` (the editor runs from `file://`, so it can't fetch them at
+runtime). To add one: save a design from the editor, drop the `.json` into
+`circuits/`, and re-embed it:
+
+```
+python3 circuits/embed.py
+```
+
+The dropdown label is the filename without `.json`. Loading a circuit replaces
+the current board (like Load) and is undoable with <kbd>⌘/Ctrl+Z</kbd>.
 
 ## Physical parameters (mm)
 
