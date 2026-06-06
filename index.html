@@ -112,9 +112,8 @@
     <div class="sep sil-only"></div>
     <div class="group sil-only">
       <label>Pins</label><input type="number" id="silPins" value="4" min="1" max="40">
-      <button id="silEdge" title="Edge header: add a support strip for 90° bent pins">Edge</button>
       <button id="silRotate" title="Rotate (R)">Rotate</button>
-      <span style="color:#777;font-size:11px">1–9 / 0 → 1–9 / 10 pins · 2.54 mm pins</span>
+      <span style="color:#777;font-size:11px">1–9 / 0 → 1–9 / 10 pins · 2.54 mm pins · ½-cell placement</span>
     </div>
     <div class="sep bus-only"></div>
     <div class="group bus-only">
@@ -186,7 +185,7 @@
     <kbd>E</kbd>/<kbd>B</kbd>/<kbd>T</kbd>/<kbd>S</kbd>/<kbd>H</kbd>/<kbd>D</kbd>/<kbd>I</kbd>/<kbd>F</kbd>/<kbd>C</kbd>/<kbd>X</kbd>/<kbd>O</kbd>/<kbd>L</kbd>/<kbd>M</kbd> pick tools.
     Board / Erase / Border / Select = rectangle drag · Trace / Hole = axis-parallel line · Line/F-trace = free segment · Bus = parallel lines · DIP (D) / SIL (I) / Text = click to place · <kbd>R</kbd> rotates DIP/SIL/Text. Right-drag always erases. <kbd>⌘/Ctrl+Z</kbd> undo.
     <b>Trim</b> (C) cuts the board outline at the fine (½-coarse-cell) level — drag a rectangle to pull an edge back under an offset SIL/DIP; right-drag restores.
-    <b>Pitch</b>: 2.54 mm (classic) or 5.08 mm (double, 3.2 mm traces). DIP/SIL keep 2.54 mm pins inside the coarse grid; route them out with the F-trace tool (narrow copper, snaps to the 2.54 mm sub-grid). SIL <b>Edge</b> adds a support strip for 90° bent header pins.
+    <b>Pitch</b>: 2.54 mm (classic) or 5.08 mm (double, 3.2 mm traces). DIP/SIL keep 2.54 mm pins; route them out with the F-trace tool (narrow copper, snaps to the 2.54 mm sub-grid). SIL headers place on the ½-fine lattice and carry only a minimal support strip around their holes — align them with coarse pads for straight breakouts, and trim the board edge to fit.
     Select then <kbd>⌘/Ctrl+C</kbd>/<kbd>X</kbd>/<kbd>V</kbd> copy/cut/paste · <kbd>⌘/Ctrl+P</kbd> print true-size sides + overview.
   </div>
   <div class="canvas-wrap" id="wrap"><canvas id="grid"></canvas></div>
@@ -343,7 +342,6 @@ const DIP_ROW_BROAD   = 6;  // (0.6")
 
 // SIL (single in-line) options
 let silPins = 4;
-let silEdge = false;        // true = edge header: add a support strip for bent pins
 
 // Shared placement rotation for DIP/SIL components (0/90/180/270, R cycles).
 let compRot = 0;
@@ -551,11 +549,6 @@ document.getElementById('silPins').addEventListener('input', e => {
   if (Number.isNaN(n) || n < 1) n = 1;
   if (n > 40) n = 40;
   silPins = n;
-  draw();
-});
-document.getElementById('silEdge').addEventListener('click', () => {
-  silEdge = !silEdge;
-  document.getElementById('silEdge').classList.toggle('active', silEdge);
   draw();
 });
 document.getElementById('silRotate').addEventListener('click', rotateComp);
@@ -944,7 +937,8 @@ function draw() {
     else if (drag.tool === 'ferase') drawTrimPreview(drag.start, drag.end, drag.button === 2);
   }
   if (!drag && !pasting && hover) {
-    if (isComponentTool(tool) && hoverFine) drawComponentPreview(componentFromTool(tool, hoverFine.fx, hoverFine.fy));
+    if (tool === 'sil' && hoverUltra) drawComponentPreview(componentFromTool('sil', hoverUltra.hx, hoverUltra.hy));
+    else if (tool === 'dip' && hoverFine) drawComponentPreview(componentFromTool('dip', hoverFine.fx, hoverFine.fy));
     else if (tool === 'text') drawTextPreview(hover.x, hover.y);
     else if (tool === 'ftrace' && hoverUltra) {
       // marker at the snapped ultrafine node = where the trace would end
@@ -1183,11 +1177,10 @@ function drawDragOverlay() {
 function inBounds(x, y) { return x >= 0 && y >= 0 && x < cols && y < rows; }
 
 // --- components (DIP / SIL) ---
-// Components keep the fine 2.54 mm pin pitch regardless of the coarse pitch.
-// fx/fy are fine-grid coordinates; each carries its own pin holes plus a
-// support-board footprint, and is routed out to coarse traces with narrow
-// fine traces (the F-trace tool).
-const HOLE_FRAC_FINE = MM_HOLE / MM_FINE; // hole size as a fraction of a fine cell
+// Components keep the 2.54 mm pin pitch regardless of the coarse pitch. Each
+// carries its own pin holes plus a support-board footprint, and is routed out to
+// coarse traces with narrow fine traces (the F-trace tool). DIP positions are
+// fine cells (fx/fy); SIL positions are half-fine ultra nodes (hx/hy).
 
 function rotOffset(dx, dy, rot) {
   switch (rot) {
@@ -1200,48 +1193,73 @@ function rotOffset(dx, dy, rot) {
 
 function compRowSpan(c) { return c.width === 'broad' ? DIP_ROW_BROAD : DIP_ROW_NARROW; }
 
-// Pin hole fine cells of a component (rotated, absolute fine coords).
+// Components carry their pin holes on the HALF-FINE (ultra) lattice. A DIP keeps
+// fine-cell alignment, so its stored fx/fy map to the fine-cell centre (ultra
+// 2*fx+1); a SIL stores its anchor hole directly in ultra coords (hx/hy), which
+// lets it land on coarse pad centres (even ultra) as well as fine-cell centres
+// (odd ultra) — so a breakout to a coarse hole can run dead straight.
+function compOriginUltra(c) {
+  return c.type === 'sil' ? { hx: c.hx, hy: c.hy } : { hx: 2 * c.fx + 1, hy: 2 * c.fy + 1 };
+}
+
+// Pin hole centres in ultra coords (rotated, absolute). The 2.54 mm pin pitch is
+// 2 ultra units (one ultra unit = a pin half-step = MM_FINE/2).
 function componentPins(c) {
-  const out = [];
-  const push = (dx, dy) => { const r = rotOffset(dx, dy, c.rot); out.push({ fx: c.fx + r.dx, fy: c.fy + r.dy }); };
+  const o = compOriginUltra(c), out = [];
+  const push = (dx, dy) => { const r = rotOffset(dx, dy, c.rot); out.push({ hx: o.hx + r.dx, hy: o.hy + r.dy }); };
   if (c.type === 'sil') {
-    for (let i = 0; i < c.pins; i++) push(i * DIP_PITCH, 0);
+    for (let i = 0; i < c.pins; i++) push(i * 2 * DIP_PITCH, 0);
   } else { // dip — two rows separated by the body span
     const half = c.pins / 2, span = compRowSpan(c);
-    for (let i = 0; i < half; i++) { push(i * DIP_PITCH, 0); push(i * DIP_PITCH, span); }
+    for (let i = 0; i < half; i++) { push(i * 2 * DIP_PITCH, 0); push(i * 2 * DIP_PITCH, 2 * span); }
   }
   return out;
 }
 
-// Support-board footprint, normalized fine-cell rect {fx0,fy0,fx1,fy1}.
-// SIL 'edge' headers add an extra fine row on the front for bent pins to rest on.
-function componentSupport(c) {
-  let L;
+// Support-board footprint as a design-mm rect {x, y, w, h} (y grows down).
+//  - SIL: a minimal strip hugging the holes — the hole-centre bounding box grown
+//    by ¼ fine cell, i.e. 1 × (2N-1) half-fine units. No surrounding edge; trim
+//    the coarse board to fit.
+//  - DIP: the package body (two rows + a one-fine-cell margin), as before.
+function componentSupportMm(c) {
   if (c.type === 'sil') {
-    const front = c.edge ? 2 : 1;
-    L = { dx0: -1, dy0: -front, dx1: c.pins, dy1: 1 };
-  } else {
-    const half = c.pins / 2, span = compRowSpan(c);
-    L = { dx0: -1, dy0: -1, dx1: half, dy1: span + 1 };
+    const m = MM_FINE / 4;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const p of componentPins(c)) {
+      const mx = p.hx * MM_FINE / 2, my = p.hy * MM_FINE / 2;
+      x0 = Math.min(x0, mx); y0 = Math.min(y0, my); x1 = Math.max(x1, mx); y1 = Math.max(y1, my);
+    }
+    return { x: x0 - m, y: y0 - m, w: (x1 - x0) + 2 * m, h: (y1 - y0) + 2 * m };
   }
-  const a = rotOffset(L.dx0, L.dy0, c.rot), b = rotOffset(L.dx1, L.dy1, c.rot);
-  return {
-    fx0: c.fx + Math.min(a.dx, b.dx), fy0: c.fy + Math.min(a.dy, b.dy),
-    fx1: c.fx + Math.max(a.dx, b.dx), fy1: c.fy + Math.max(a.dy, b.dy),
-  };
+  const half = c.pins / 2, span = compRowSpan(c);
+  const a = rotOffset(-1, -1, c.rot), b = rotOffset(half, span + 1, c.rot);
+  const fx0 = c.fx + Math.min(a.dx, b.dx), fy0 = c.fy + Math.min(a.dy, b.dy);
+  const fx1 = c.fx + Math.max(a.dx, b.dx), fy1 = c.fy + Math.max(a.dy, b.dy);
+  return { x: fx0 * MM_FINE, y: fy0 * MM_FINE, w: (fx1 - fx0 + 1) * MM_FINE, h: (fy1 - fy0 + 1) * MM_FINE };
+}
+
+// Migrate a loaded component to the current model: pre-v8 SILs stored fine fx/fy
+// plus an `edge` flag — map them to half-fine hx/hy at the same hole positions
+// and drop the removed surrounding-support option.
+function normComponent(c) {
+  if (c.type === 'sil') {
+    return { type: 'sil', hx: c.hx != null ? c.hx : 2 * c.fx + 1,
+             hy: c.hy != null ? c.hy : 2 * c.fy + 1, pins: c.pins, rot: c.rot || 0 };
+  }
+  return { type: 'dip', fx: c.fx, fy: c.fy, pins: c.pins, rot: c.rot || 0, width: c.width || 'narrow' };
 }
 
 function componentInBounds(c) {
-  const s = componentSupport(c);
-  return s.fx0 >= 0 && s.fy0 >= 0 && s.fx1 < cols * pitch && s.fy1 < rows * pitch;
+  const s = componentSupportMm(c), W = cols * mmCell, H = rows * mmCell, eps = 1e-6;
+  return s.x >= -eps && s.y >= -eps && s.x + s.w <= W + eps && s.y + s.h <= H + eps;
 }
 
 function componentOverlaps(c, ignoreIndex) {
-  const s = componentSupport(c);
+  const s = componentSupportMm(c);
   for (let i = 0; i < components.length; i++) {
     if (i === ignoreIndex) continue;
-    const t = componentSupport(components[i]);
-    if (s.fx0 <= t.fx1 && t.fx0 <= s.fx1 && s.fy0 <= t.fy1 && t.fy0 <= s.fy1) return true;
+    const t = componentSupportMm(components[i]);
+    if (s.x < t.x + t.w && t.x < s.x + s.w && s.y < t.y + t.h && t.y < s.y + s.h) return true;
   }
   return false;
 }
@@ -1250,10 +1268,9 @@ function componentOverlaps(c, ignoreIndex) {
 // preview (which also shows the pin holes). For placed components the pin holes
 // are drawn separately, on top of fine traces, by drawComponentPins().
 function drawComponent(c, ghost) {
-  const fp = cellPx / pitch;
-  const s = componentSupport(c);
-  const sx = s.fx0 * fp, sy = s.fy0 * fp;
-  const sw = (s.fx1 - s.fx0 + 1) * fp, sh = (s.fy1 - s.fy0 + 1) * fp;
+  const k = cellPx / mmCell;
+  const s = componentSupportMm(c);
+  const sx = s.x * k, sy = s.y * k, sw = s.w * k, sh = s.h * k;
   ctx.save();
   if (ghost) ctx.globalAlpha = 0.6;
   ctx.fillStyle = COLOR_BOARD;
@@ -1263,34 +1280,33 @@ function drawComponent(c, ghost) {
   ctx.strokeStyle = ghost ? '#2a90ff' : 'rgba(0,0,0,0.5)';
   ctx.lineWidth = ghost ? 2 : 1;
   if (ghost) ctx.setLineDash([4, 3]);
-  ctx.strokeRect(sx + 1, sy + 1, sw - 2, sh - 2);
+  ctx.strokeRect(sx + 1, sy + 1, Math.max(0, sw - 2), Math.max(0, sh - 2));
   ctx.setLineDash([]);
 }
 
 // Dark pin holes — drawn on top so holes always read above fine traces.
 function drawComponentPins(c) {
-  const fp = cellPx / pitch;
-  const hs = fp * HOLE_FRAC_FINE, ho = (fp - hs) / 2;
+  const up = ultraPx(), hs = MM_HOLE * (cellPx / mmCell);
   ctx.fillStyle = COLOR_HOLE;
-  for (const p of componentPins(c)) ctx.fillRect(p.fx * fp + ho, p.fy * fp + ho, hs, hs);
+  for (const p of componentPins(c)) ctx.fillRect(p.hx * up - hs / 2, p.hy * up - hs / 2, hs, hs);
 }
 
 function drawComponentPreview(c) {
   drawComponent(c, true);
   if (!componentInBounds(c) || componentOverlaps(c)) {
-    const fp = cellPx / pitch, s = componentSupport(c);
+    const k = cellPx / mmCell, s = componentSupportMm(c);
     ctx.fillStyle = 'rgba(220,50,50,0.3)';
-    ctx.fillRect(s.fx0 * fp, s.fy0 * fp, (s.fx1 - s.fx0 + 1) * fp, (s.fy1 - s.fy0 + 1) * fp);
+    ctx.fillRect(s.x * k, s.y * k, s.w * k, s.h * k);
   }
 }
 
-function componentFromTool(toolName, fx, fy) {
-  if (toolName === 'sil') return { type: 'sil', fx, fy, pins: silPins, rot: compRot, edge: silEdge };
-  return { type: 'dip', fx, fy, pins: dipPins, rot: compRot, width: dipWidth };
+// SIL holes sit on the half-fine lattice (a,b = ultra); DIP holes on fine cells.
+function componentFromTool(toolName, a, b) {
+  if (toolName === 'sil') return { type: 'sil', hx: a, hy: b, pins: silPins, rot: compRot };
+  return { type: 'dip', fx: a, fy: b, pins: dipPins, rot: compRot, width: dipWidth };
 }
 
-function placeComponent(toolName, fx, fy) {
-  const c = componentFromTool(toolName, fx, fy);
+function placeComponent(c) {
   if (!componentInBounds(c) || componentOverlaps(c)) return;
   pushHistory();
   components.push(c);
@@ -1298,20 +1314,11 @@ function placeComponent(toolName, fx, fy) {
   draw();
 }
 
-// Index of the component whose footprint covers fine cell (fx,fy), or -1.
-function componentAtFine(fx, fy) {
-  for (let i = components.length - 1; i >= 0; i--) {
-    const s = componentSupport(components[i]);
-    if (fx >= s.fx0 && fx <= s.fx1 && fy >= s.fy0 && fy <= s.fy1) return i;
-  }
-  return -1;
-}
-
 // Coarse cells (x,y) overlapped by a component's footprint — used by erase.
 function componentCoarseCells(c) {
-  const s = componentSupport(c), out = [];
-  const cx0 = Math.floor(s.fx0 / pitch), cx1 = Math.floor(s.fx1 / pitch);
-  const cy0 = Math.floor(s.fy0 / pitch), cy1 = Math.floor(s.fy1 / pitch);
+  const s = componentSupportMm(c), out = [];
+  const cx0 = Math.max(0, Math.floor(s.x / mmCell)), cx1 = Math.min(cols - 1, Math.floor((s.x + s.w - 1e-6) / mmCell));
+  const cy0 = Math.max(0, Math.floor(s.y / mmCell)), cy1 = Math.min(rows - 1, Math.floor((s.y + s.h - 1e-6) / mmCell));
   for (let cy = cy0; cy <= cy1; cy++)
     for (let cx = cx0; cx <= cx1; cx++) out.push({ x: cx, y: cy });
   return out;
@@ -1551,8 +1558,8 @@ canvas.addEventListener('mousedown', e => {
     return;
   }
   if (isComponentTool(tool) && e.button === 0) {
-    const f = fineAt(e);
-    placeComponent(tool, f.fx, f.fy);
+    if (tool === 'sil') { const u = ultraAt(e); placeComponent(componentFromTool('sil', u.hx, u.hy)); }
+    else                { const f = fineAt(e);  placeComponent(componentFromTool('dip', f.fx, f.fy)); }
     return;
   }
   if (tool === 'text' && e.button === 0) {
@@ -1859,7 +1866,7 @@ function restoreSnapshot(s) {
   texts = Array.isArray(s.texts) ? s.texts.map(t => ({...t})) : [];
   borders = Array.isArray(s.borders) ? s.borders.map(b => ({...b})) : [];
   lines = Array.isArray(s.lines) ? s.lines.map(l => ({...l})) : [];
-  components = Array.isArray(s.components) ? s.components.map(c => ({...c})) : [];
+  components = Array.isArray(s.components) ? s.components.map(normComponent) : [];
   ftraces = Array.isArray(s.ftraces) ? s.ftraces.map(t => ({...t})) : [];
   cuts = new Set(Array.isArray(s.cuts) ? s.cuts : []);
   document.getElementById('cols').value = cols;
@@ -1916,9 +1923,9 @@ const LINK_RE = /^([hv]):(\d+),(\d+)$/;
 // matching half-fine node range. Fine objects are captured/cut only when wholly
 // inside, and stored relative to the selection's fine / half-fine origin.
 function componentInSel(c, sel) {
-  const s = componentSupport(c);
-  return s.fx0 >= sel.x0 * pitch && s.fy0 >= sel.y0 * pitch &&
-         s.fx1 <= (sel.x1 + 1) * pitch - 1 && s.fy1 <= (sel.y1 + 1) * pitch - 1;
+  const s = componentSupportMm(c), eps = 1e-6;
+  return s.x >= sel.x0 * mmCell - eps && s.y >= sel.y0 * mmCell - eps &&
+         s.x + s.w <= (sel.x1 + 1) * mmCell + eps && s.y + s.h <= (sel.y1 + 1) * mmCell + eps;
 }
 function ftraceInSel(t, sel) {
   const ux0 = sel.x0 * 2 * pitch, uy0 = sel.y0 * 2 * pitch;
@@ -1963,7 +1970,9 @@ function captureSelection(sel) {
   const ffx0 = x0 * pitch, ffy0 = y0 * pitch, uhx0 = x0 * 2 * pitch, uhy0 = y0 * 2 * pitch;
   const cComponents = components
     .filter(c => componentInSel(c, sel))
-    .map(c => ({ ...c, fx: c.fx - ffx0, fy: c.fy - ffy0 }));
+    .map(c => c.type === 'sil'
+      ? { ...c, hx: c.hx - uhx0, hy: c.hy - uhy0 }
+      : { ...c, fx: c.fx - ffx0, fy: c.fy - ffy0 });
   const cFtraces = ftraces
     .filter(t => ftraceInSel(t, sel))
     .map(t => ({ hx1: t.hx1 - uhx0, hy1: t.hy1 - uhy0, hx2: t.hx2 - uhx0, hy2: t.hy2 - uhy0 }));
@@ -2052,6 +2061,7 @@ function rotateClip(clip) {
   const Rf = (fx, fy) => ({ fx: H * P - 1 - fy, fy: fx });
   const Ru = (hx, hy) => ({ hx: H * 2 * P - hy, hy: hx });
   const components = (clip.components || []).map(c => {
+    if (c.type === 'sil') { const p = Ru(c.hx, c.hy); return { ...c, hx: p.hx, hy: p.hy, rot: (c.rot + 90) % 360 }; }
     const p = Rf(c.fx, c.fy);
     return { ...c, fx: p.fx, fy: p.fy, rot: (c.rot + 90) % 360 };
   });
@@ -2135,7 +2145,9 @@ function commitPaste(offX, offY) {
   if ((clip.pitch || pitch) === pitch) {
     const ffx = offX * pitch, ffy = offY * pitch, uhx = offX * 2 * pitch, uhy = offY * 2 * pitch;
     for (const c of clip.components || []) {
-      const nc = { ...c, fx: c.fx + ffx, fy: c.fy + ffy };
+      const nc = c.type === 'sil'
+        ? { ...c, hx: c.hx + uhx, hy: c.hy + uhy }
+        : { ...c, fx: c.fx + ffx, fy: c.fy + ffy };
       if (componentInBounds(nc) && !componentOverlaps(nc)) components.push(nc);
     }
     for (const t of clip.ftraces || []) {
@@ -2224,7 +2236,9 @@ function drawPasteGhost(offX, offY) {
     for (const t of clip.ftraces || [])
       strokeFtrace({ hx1: t.hx1 + uhx, hy1: t.hy1 + uhy, hx2: t.hx2 + uhx, hy2: t.hy2 + uhy }, null);
     for (const c of clip.components || []) {
-      const nc = { ...c, fx: c.fx + ffx, fy: c.fy + ffy };
+      const nc = c.type === 'sil'
+        ? { ...c, hx: c.hx + uhx, hy: c.hy + uhy }
+        : { ...c, fx: c.fx + ffx, fy: c.fy + ffy };
       drawComponent(nc, false);
       drawComponentPins(nc);
     }
@@ -2245,7 +2259,7 @@ document.getElementById('pasteBtn').addEventListener('click', startPaste);
 
 // --- persistence ---
 function serialize() {
-  return { version: 7, cols, rows, pitch, cellMm: mmCell, fineMm: MM_FINE,
+  return { version: 8, cols, rows, pitch, cellMm: mmCell, fineMm: MM_FINE,
            cells, links: [...links], texts, borders, lines, components, ftraces,
            cuts: [...cuts] };
 }
@@ -2278,7 +2292,7 @@ function deserialize(data) {
     ? data.lines.filter(l => inBounds(l.x1, l.y1) && inBounds(l.x2, l.y2)).map(l => ({...l}))
     : [];
   components = Array.isArray(data.components)
-    ? data.components.map(c => ({...c})).filter(componentInBounds)
+    ? data.components.map(normComponent).filter(componentInBounds)
     : [];
   ftraces = Array.isArray(data.ftraces)
     ? data.ftraces
@@ -2456,15 +2470,14 @@ function renderPrintBoard(g, px, opts) {
   }
   // Components: support-board footprint + fine pin holes.
   for (const c of components) {
-    const s = componentSupport(c);
-    const bx = s.fx0 * MM_FINE * k, by = s.fy0 * MM_FINE * k;
-    const bw = (s.fx1 - s.fx0 + 1) * MM_FINE * k, bh = (s.fy1 - s.fy0 + 1) * MM_FINE * k;
+    const s = componentSupportMm(c);
+    const bx = s.x * k, by = s.y * k, bw = s.w * k, bh = s.h * k;
     if (mode === 'ui') { g.fillStyle = COLOR_BOARD; g.fillRect(bx, by, bw, bh); }
     else { g.strokeStyle = '#9a9a9a'; g.lineWidth = Math.max(1, 0.12 * k); g.strokeRect(bx, by, bw, bh); }
     const hs = MM_HOLE * k;
     g.fillStyle = mode === 'ui' ? COLOR_HOLE : '#000000';
     for (const p of componentPins(c)) {
-      const cx = (p.fx + 0.5) * MM_FINE * k, cy = (p.fy + 0.5) * MM_FINE * k;
+      const cx = p.hx * (MM_FINE / 2) * k, cy = p.hy * (MM_FINE / 2) * k;
       g.fillRect(cx - hs / 2, cy - hs / 2, hs, hs);
     }
   }
@@ -2607,12 +2620,10 @@ function exportScad() {
   const compHoles  = []; // [xc, yc]            hole centers (mm)
   const compBoards = []; // [x, y, w, h]        support board, lower-left (mm)
   const fineTraces = []; // [x1, y1, x2, y2]    narrow copper grooves (mm)
-  const fineCenter = (fx, fy) => [(fx + 0.5) * MM_FINE, yMaxMm - (fy + 0.5) * MM_FINE];
   for (const c of components) {
-    for (const p of componentPins(c)) compHoles.push(fineCenter(p.fx, p.fy));
-    const s = componentSupport(c);
-    const x = s.fx0 * MM_FINE, w = (s.fx1 - s.fx0 + 1) * MM_FINE, h = (s.fy1 - s.fy0 + 1) * MM_FINE;
-    compBoards.push([x, yMaxMm - (s.fy1 + 1) * MM_FINE, w, h]); // lower-left
+    for (const p of componentPins(c)) compHoles.push([p.hx * MM_FINE / 2, yMaxMm - p.hy * MM_FINE / 2]);
+    const s = componentSupportMm(c);
+    compBoards.push([s.x, yMaxMm - (s.y + s.h), s.w, s.h]); // lower-left, Y flipped
   }
   const ultraCenter = (hx, hy) => [hx * MM_FINE / 2, yMaxMm - hy * MM_FINE / 2];
   for (const t of ftraces) {
