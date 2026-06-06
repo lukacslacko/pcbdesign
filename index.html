@@ -673,7 +673,7 @@ function clampInt(v, lo, hi, fallback) {
 }
 
 function setZoom(px) {
-  cellPx = Math.max(6, Math.min(48, px));
+  cellPx = Math.max(6, Math.min(64, px));
   setCanvasSize(); draw();
 }
 
